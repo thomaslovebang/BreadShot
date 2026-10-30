@@ -7,3 +7,5 @@ Every persisted document includes a schema version. Mouse events use JSON Lines 
 The first line is metadata describing the Windows virtual desktop bounds and sampling interval. Remaining lines contain monotonic `time_ms` and fractional `time`, absolute and normalized coordinates, `speed_px_s`, a click flag, and an event name (`move`, `left_click`, or `right_click`). The trace is saved beside the source MP4 as `<recording>.mouse.jsonl`.
 
 Phase 5 writes `<recording>.camera.json`. It contains semantic camera segments with start/end timestamps, from/to poses, easing, and the reason (`dwell`, `click`, `transition`, or `full_frame`). The renderer consumes this file without needing to understand mouse events.
+
+Phase 9 keeps that automatic `camera.json` unchanged. Manual workbench exports append a `set_camera_timeline` operation to `<recording>.edit.json`. Re-export prefers that operation, then falls back to per-segment `camera_override` operations and the automatic file. Generating a new clip sequence drops the manual camera operation and realigns from `camera.json`.

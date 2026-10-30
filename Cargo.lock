@@ -806,6 +806,7 @@ dependencies = [
 name = "focusflow-editor-core"
 version = "0.1.0"
 dependencies = [
+ "focusflow-domain",
  "serde",
 ]
 
@@ -835,6 +836,7 @@ dependencies = [
 name = "focusflow-project-store"
 version = "0.1.0"
 dependencies = [
+ "focusflow-domain",
  "serde",
  "serde_json",
 ]

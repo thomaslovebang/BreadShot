@@ -16,11 +16,16 @@ FocusFlow V1 targets Windows only. Platform-specific code is kept behind adapter
 Dependencies point inward toward `domain`. Algorithm crates do not depend on Tauri, React, FFmpeg process details, or Windows APIs.
 
 ```text
-desktop -> recorder/tracker/focus_engine/renderer/project_store
+desktop -> recorder/tracker/focus_engine/editor_core/renderer/project_store
 recorder/tracker -> platform_windows
 renderer -> media
+editor_core / project_store / focus_engine -> domain
 all core crates -> domain
 ```
+
+## Current stage
+
+Phase 9 is current. The manual workbench edits camera keyframes and re-exports with the existing renderer. Recording still generates the automatic camera timeline and final MP4 without using the workbench. The list below is the historical phase boundary, not a replacement for that pipeline.
 
 ## Phase boundaries
 
@@ -30,4 +35,6 @@ all core crates -> domain
 - Phase 5: deterministic focus engine
 - Phase 6: FFmpeg renderer
 - Phase 7: motion and quality tuning
+- Phase 8: in-app preview and clip timeline
+- Phase 9: manual camera workbench
 

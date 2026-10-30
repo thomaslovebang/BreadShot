@@ -1,5 +1,7 @@
 # Phase 5 Focus Engine test
 
+> Phase 9 is the current product stage. This file is a historical test note.
+
 Record 20–30 seconds containing these behaviors:
 
 1. Move the pointer quickly without clicking.

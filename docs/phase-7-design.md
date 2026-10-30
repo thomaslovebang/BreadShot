@@ -1,5 +1,7 @@
 # FocusFlow Phase 7 技术设计
 
+> Phase 9 is the current product stage. This document is the Phase 7 design record and is unchanged below.
+
 ## 目标
 
 Phase 7 将 Phase 6.2 的“自动缩放录屏”升级为第一版“本地智能导演”。用户仍然只需录制一次，FocusFlow 自动生成更自然的镜头、点击反馈和声音，并允许在应用内预览、切换风格后重新生成。

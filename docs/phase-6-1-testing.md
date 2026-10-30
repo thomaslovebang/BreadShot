@@ -1,5 +1,7 @@
 # Phase 6.1 测试说明
 
+> Phase 9 is the current product stage. This file is a historical test note.
+
 本阶段只验收三件事：成片时长、界面观感、录制时窗口行为。
 
 ## 启动
