@@ -89,15 +89,44 @@ impl DesktopBounds {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct CaptureBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 pub struct MouseTrackerHandle {
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<Result<(), String>>>,
 }
 
+impl DesktopBounds {
+    fn from_capture(bounds: CaptureBounds) -> Result<Self, String> {
+        if bounds.width <= 0 || bounds.height <= 0 {
+            return Err("录制区域尺寸无效".to_string());
+        }
+        Ok(Self {
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height,
+        })
+    }
+}
+
 impl MouseTrackerHandle {
-    pub fn start(path: &Path, origin: Instant) -> Result<Self, String> {
+    pub fn start(
+        path: &Path,
+        origin: Instant,
+        bounds: Option<CaptureBounds>,
+    ) -> Result<Self, String> {
         let file = File::create(path).map_err(|error| format!("无法创建鼠标轨迹文件：{error}"))?;
-        let bounds = DesktopBounds::query()?;
+        let bounds = match bounds {
+            Some(bounds) => DesktopBounds::from_capture(bounds)?,
+            None => DesktopBounds::query()?,
+        };
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
 

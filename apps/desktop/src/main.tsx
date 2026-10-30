@@ -1,11 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
 import { Workbench, type StudioProject } from "./workbench";
+import {
+  choiceFromStorage,
+  choiceToStorage,
+  hotkeyRegistrationMessage,
+  isTransformCallbackFailure,
+  startDisplayArgs,
+  tauriCallbackBridgeReady,
+  type CaptureDisplay,
+  type DisplayChoice,
+} from "./recording-ui";
 
 type RecorderStatus = {
   isRecording: boolean;
@@ -22,6 +32,7 @@ type RecorderStatus = {
 type DirectorProfile = "clean" | "dynamic" | "soft";
 
 const DEFAULT_SHORTCUT = "F8";
+const DISPLAY_STORAGE_KEY = "focusflow.display";
 const SINGLE_KEY_PATTERN = /^(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4]))$/;
 
 function savedShortcut() {
@@ -66,17 +77,31 @@ function App() {
   const [shortcut, setShortcut] = useState(savedShortcut);
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
   const [capturedShortcut, setCapturedShortcut] = useState<string | null>(null);
+  const [hotkeyError, setHotkeyError] = useState<string | null>(null);
+  const [displays, setDisplays] = useState<CaptureDisplay[]>([]);
+  const [displayChoice, setDisplayChoice] = useState<DisplayChoice>("all");
+  const [autoPlayPreview, setAutoPlayPreview] = useState(false);
   const [studio, setStudio] = useState<StudioProject | null>(null);
   const statusRef = useRef(status);
   const busyRef = useRef(busy);
   const shortcutRef = useRef(shortcut);
   const shortcutDialogOpenRef = useRef(false);
+  const displayChoiceRef = useRef<DisplayChoice>("all");
+  const boundShortcutRef = useRef<string | null>(null);
+  const bindQueue = useRef(Promise.resolve());
   const toggleRef = useRef<() => Promise<void>>(async () => undefined);
+
+  function queueHotkeyBind(task: () => Promise<void>) {
+    const run = bindQueue.current.then(task, task);
+    bindQueue.current = run.then(() => undefined, () => undefined);
+    return run;
+  }
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { busyRef.current = busy; }, [busy]);
   useEffect(() => { shortcutRef.current = shortcut; }, [shortcut]);
   useEffect(() => { shortcutDialogOpenRef.current = shortcutDialogOpen; }, [shortcutDialogOpen]);
+  useEffect(() => { displayChoiceRef.current = displayChoice; }, [displayChoice]);
 
   useEffect(() => {
     async function initialize() {
@@ -91,9 +116,26 @@ function App() {
           await invoke<DirectorProfile>("set_director_profile", { profile: savedProfile });
           next = { ...next, directorProfile: savedProfile };
         }
+        let displayWarning = "";
+        try {
+          const listed = await invoke<CaptureDisplay[]>("list_capture_displays");
+          const choice = choiceFromStorage(localStorage.getItem(DISPLAY_STORAGE_KEY), listed);
+          setDisplays(listed);
+          setDisplayChoice(choice);
+          displayChoiceRef.current = choice;
+          localStorage.setItem(DISPLAY_STORAGE_KEY, choiceToStorage(choice));
+        } catch (error) {
+          setDisplays([]);
+          setDisplayChoice("all");
+          displayChoiceRef.current = "all";
+          displayWarning = isTransformCallbackFailure(error)
+            ? hotkeyRegistrationMessage(shortcutRef.current, error)
+            : "无法列出显示器，将录制全部屏幕。按钮仍可点击。";
+          if (isTransformCallbackFailure(error)) setHotkeyError(displayWarning);
+        }
         setStatus(next);
         setTimerRunning(next.isRecording);
-        setMessage(next.ffmpegAvailable ? "准备就绪" : "未找到 FFmpeg，录制功能暂不可用");
+        setMessage(displayWarning || (next.ffmpegAvailable ? "准备就绪" : "未找到 FFmpeg，录制功能暂不可用"));
       } catch (error) {
         setMessage(String(error));
       } finally {
@@ -104,22 +146,102 @@ function App() {
   }, []);
 
   useEffect(() => {
+    function reportHotkeyFailure(error: unknown) {
+      const message = hotkeyRegistrationMessage(shortcutRef.current, error);
+      setHotkeyError(message);
+      setMessage(message);
+    }
+    function onError(event: ErrorEvent) {
+      if (!isTransformCallbackFailure(event.error ?? event.message)) return;
+      event.preventDefault();
+      reportHotkeyFailure(event.error ?? event.message);
+    }
+    function onRejection(event: PromiseRejectionEvent) {
+      if (!isTransformCallbackFailure(event.reason)) return;
+      event.preventDefault();
+      reportHotkeyFailure(event.reason);
+    }
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
+
+  // Bind from Rust. The JS shortcut plugin builds a Channel through
+  // window.__TAURI_INTERNALS__.transformCallback, and that TypeError used to freeze the UI.
+  useEffect(() => {
     let disposed = false;
-    async function install() {
-      try {
-        await unregister(shortcut).catch(() => undefined);
+    let unlisten: UnlistenFn | undefined;
+    async function installListener() {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
         if (disposed) return;
-        await register(shortcut, (event) => {
-          if (event.state === "Pressed" && !shortcutDialogOpenRef.current) void toggleRef.current();
-        });
-      } catch (error) {
-        setMessage(`快捷键不可用：${String(error)}`);
+        if (!tauriCallbackBridgeReady(window.__TAURI_INTERNALS__)) {
+          if (attempt === 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, 250));
+            continue;
+          }
+          const message = hotkeyRegistrationMessage(
+            shortcutRef.current,
+            new TypeError("Cannot read properties of undefined (reading 'transformCallback')"),
+          );
+          setHotkeyError(message);
+          setMessage(message);
+          return;
+        }
+        try {
+          unlisten = await listen("focusflow-hotkey", () => {
+            if (!shortcutDialogOpenRef.current) void toggleRef.current();
+          });
+          if (disposed) {
+            unlisten();
+            unlisten = undefined;
+          }
+          return;
+        } catch (error) {
+          if (disposed) return;
+          if (isTransformCallbackFailure(error) && attempt === 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, 250));
+            continue;
+          }
+          const message = hotkeyRegistrationMessage(shortcutRef.current, error);
+          setHotkeyError(message);
+          setMessage(message);
+          return;
+        }
       }
     }
-    void install();
+    void installListener();
     return () => {
       disposed = true;
-      void unregister(shortcut).catch(() => undefined);
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (boundShortcutRef.current === shortcut) return;
+    let disposed = false;
+    void queueHotkeyBind(async () => {
+      if (disposed || boundShortcutRef.current === shortcut) return;
+      try {
+        if (!tauriCallbackBridgeReady(window.__TAURI_INTERNALS__)) {
+          throw new TypeError("Cannot read properties of undefined (reading 'transformCallback')");
+        }
+        await invoke("bind_hotkey", { shortcut });
+        if (!disposed) {
+          boundShortcutRef.current = shortcut;
+          setHotkeyError(null);
+        }
+      } catch (error) {
+        if (disposed) return;
+        const message = hotkeyRegistrationMessage(shortcut, error);
+        setHotkeyError(message);
+        setMessage(message);
+      }
+    });
+    return () => {
+      disposed = true;
     };
   }, [shortcut]);
 
@@ -181,8 +303,10 @@ function App() {
       statusRef.current = processingStatus;
       setStatus(processingStatus);
     }
-    const command = wasRecording ? "stop_recording" : "start_recording";
-    const commandResult = invoke<RecorderStatus>(command).then(
+    const commandResult = (wasRecording
+      ? invoke<RecorderStatus>("stop_recording")
+      : invoke<RecorderStatus>("start_recording", startDisplayArgs(displayChoiceRef.current))
+    ).then(
       (value) => ({ value, error: null }),
       (error) => ({ value: null, error }),
     );
@@ -202,8 +326,30 @@ function App() {
         setMessage(`正在录制 · 再按 ${shortcutRef.current} 停止`);
         await appWindow.hide();
       } else {
-        setMessage("最终视频已生成");
-        if (next.projectPath) await enterStudio(next.projectPath);
+        const previewTarget = next.finalVideoPath || next.outputPath;
+        try {
+          if (next.projectPath) {
+            await enterStudio(next.projectPath, true);
+            setMessage("录制已完成，已打开项目预览");
+          } else if (previewTarget) {
+            await invoke("open_recorded_video", { path: previewTarget });
+            setMessage("录制已完成，已打开视频");
+          } else {
+            setMessage("录制已完成");
+          }
+        } catch (openError) {
+          if (previewTarget) {
+            try {
+              await invoke("open_recorded_video", { path: previewTarget });
+              setMessage("录制已完成，已打开视频");
+            } catch {
+              setMessage(`录制已完成，但无法打开预览：${String(openError)}`);
+            }
+          } else {
+            setMessage(`录制已完成，但无法打开预览：${String(openError)}`);
+          }
+        }
+        await restoreAndFocusWindow().catch(() => undefined);
       }
     } catch (error) {
       setMessage(String(error));
@@ -257,8 +403,9 @@ function App() {
     }
   }
 
-  async function enterStudio(projectPath: string) {
+  async function enterStudio(projectPath: string, autoPlay = false) {
     const project = await invoke<StudioProject>("load_studio_project", { path: projectPath });
+    setAutoPlayPreview(autoPlay);
     setStudio(project);
   }
 
@@ -266,21 +413,24 @@ function App() {
     const next = capturedShortcut;
     if (!next || status.isRecording) return;
     try {
-      await unregister(shortcut).catch(() => undefined);
-      await register(next, (event) => {
-        if (event.state === "Pressed" && !shortcutDialogOpenRef.current) void toggleRef.current();
+      await queueHotkeyBind(async () => {
+        if (!tauriCallbackBridgeReady(window.__TAURI_INTERNALS__)) {
+          throw new TypeError("Cannot read properties of undefined (reading 'transformCallback')");
+        }
+        await invoke("bind_hotkey", { shortcut: next });
+        boundShortcutRef.current = next;
       });
       setShortcut(next);
       shortcutRef.current = next;
       localStorage.setItem("focusflow.shortcut", next);
+      setHotkeyError(null);
       setMessage(`快捷键已更新为 ${next}`);
       setShortcutDialogOpen(false);
       setCapturedShortcut(null);
     } catch (error) {
-      await register(shortcut, (event) => {
-        if (event.state === "Pressed" && !shortcutDialogOpenRef.current) void toggleRef.current();
-      }).catch(() => undefined);
-      setMessage(`快捷键设置失败：${String(error)}`);
+      const message = hotkeyRegistrationMessage(next, error);
+      setHotkeyError(message);
+      setMessage(message);
     }
   }
 
@@ -318,6 +468,7 @@ function App() {
             key={`${studio.projectPath}:${studio.previewRevision}`}
             studio={studio}
             message={message}
+            autoPlay={autoPlayPreview}
             onBack={() => setStudio(null)}
             onStudioChange={setStudio}
             onMessage={setMessage}
@@ -357,6 +508,31 @@ function App() {
                 <button className="secondary-button" type="button" disabled={status.isRecording || busy} onClick={chooseOutputDirectory}>更改</button>
               </div>
               <div className="setting-row">
+                <div><strong>录制显示器</strong><span>开始前选择要录制的屏幕</span></div>
+                <select
+                  className="profile-select display-select"
+                  aria-label="录制显示器"
+                  value={displayChoice === "all" ? "all" : String(displayChoice.index)}
+                  disabled={status.isRecording || busy}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    const display = displays.find((item) => String(item.index) === value);
+                    const next: DisplayChoice = value === "all" || !display
+                      ? "all"
+                      : { index: display.index, name: display.name };
+                    setDisplayChoice(next);
+                    displayChoiceRef.current = next;
+                    localStorage.setItem(DISPLAY_STORAGE_KEY, choiceToStorage(next));
+                    setMessage(next === "all" ? "将录制全部显示器" : `将录制${display?.label ?? "所选显示器"}`);
+                  }}
+                >
+                  <option value="all">全部显示器</option>
+                  {displays.map((display) => (
+                    <option key={`${display.index}:${display.name}`} value={String(display.index)}>{display.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="setting-row">
                 <div><strong>导演风格</strong><span>决定缩放强度与镜头移动节奏</span></div>
                 <select className="profile-select" value={status.directorProfile} disabled={status.isRecording || busy} onChange={(event) => void changeDirectorProfile(event.target.value as DirectorProfile)}>
                   <option value="clean">Clean</option>
@@ -371,6 +547,7 @@ function App() {
                   <button className="secondary-button" type="button" disabled={status.isRecording} onClick={() => { setCapturedShortcut(null); setShortcutDialogOpen(true); }}>更改</button>
                 </div>
               </div>
+              {hotkeyError && <p className="hotkey-warning" role="status">{hotkeyError}</p>}
             </section>
 
             <section className="panel-card output-card">
@@ -401,6 +578,7 @@ function App() {
             <span className="eyebrow">快捷键设置</span>
             <h2 id="shortcut-title">请直接点击想设置的快捷键</h2>
             <p>只能设置一个按键，例如 F8、G 或 1，不区分大小写。</p>
+            {hotkeyError && <p className="hotkey-warning">{hotkeyError}</p>}
             <div className={`captured-key ${capturedShortcut ? "has-key" : ""}`}>
               {capturedShortcut || "等待按键…"}
             </div>

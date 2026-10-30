@@ -97,6 +97,9 @@ button { font: inherit; }
 .profile-select { min-width: 104px; height: 34px; padding: 0 30px 0 12px; border: 1px solid rgb(255 255 255 / 10%); border-radius: 9px; outline: none; background: #171a21; color: #dce0e9; font: 600 10px/1 Inter, "Segoe UI", sans-serif; cursor: pointer; transition: border-color 160ms ease, box-shadow 160ms ease; }
 .profile-select:hover:not(:disabled), .profile-select:focus-visible { border-color: rgb(139 92 246 / 55%); box-shadow: 0 0 0 3px rgb(139 92 246 / 10%); }
 .profile-select:disabled { cursor: not-allowed; opacity: .45; }
+.display-select { max-width: 240px; min-width: 168px; }
+.hotkey-warning { margin: 0; padding: 0 18px 14px; color: #e2b15a; font-size: 11px; line-height: 1.5; }
+.shortcut-modal .hotkey-warning { padding: 0 0 16px; text-align: center; }
 .secondary-button { flex: none; border: 1px solid rgb(255 255 255 / 9%); border-radius: 9px; padding: 8px 12px; color: #b9c0cd; background: #202530; cursor: pointer; font-size: 10px; transition: background .15s ease, border-color .15s ease; }
 .secondary-button:hover:not(:disabled) { border-color: rgb(125 148 255 / 30%); background: #293141; }
 .secondary-button:disabled { cursor: not-allowed; opacity: .34; }

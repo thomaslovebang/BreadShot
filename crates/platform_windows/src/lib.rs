@@ -8,4 +8,4 @@ pub const PLATFORM_NAME: &str = "windows";
 
 mod mouse_tracker;
 
-pub use mouse_tracker::MouseTrackerHandle;
+pub use mouse_tracker::{CaptureBounds, MouseTrackerHandle};

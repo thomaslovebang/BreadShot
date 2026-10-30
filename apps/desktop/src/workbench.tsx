@@ -36,6 +36,7 @@ export type StudioProject = {
 type WorkbenchProps = {
   studio: StudioProject;
   message: string;
+  autoPlay?: boolean;
   onBack: () => void;
   onStudioChange: (studio: StudioProject) => void;
   onMessage: (message: string) => void;
@@ -77,7 +78,7 @@ function nearestKeyframe(frames: CameraKeyframe[], timeMs: number) {
   return best;
 }
 
-export function Workbench({ studio, message, onBack, onStudioChange, onMessage }: WorkbenchProps) {
+export function Workbench({ studio, message, autoPlay = false, onBack, onStudioChange, onMessage }: WorkbenchProps) {
   const initialFrames = keyframesFromTimeline(studio.cameraTimeline);
   const baseline = useMemo(
     () => keyframesFromTimeline(studio.baselineCameraTimeline),
@@ -104,6 +105,8 @@ export function Workbench({ studio, message, onBack, onStudioChange, onMessage }
   const sliderOrigin = useRef<CameraKeyframe[] | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewFrameRef = useRef<HTMLDivElement>(null);
+  const autoPlayRef = useRef(autoPlay);
+  autoPlayRef.current = autoPlay;
 
   const duration = Math.max(studio.durationMs, keyframes.at(-1)?.time_ms ?? 0, 1);
   durationRef.current = duration;
@@ -513,7 +516,8 @@ export function Workbench({ studio, message, onBack, onStudioChange, onMessage }
               const video = event.currentTarget;
               video.volume = 0.8;
               if (video.videoWidth > 0 && video.videoHeight > 0) setAspect(video.videoWidth / video.videoHeight);
-              video.currentTime = playheadRef.current / 1000;
+              if (playheadRef.current > 0) video.currentTime = playheadRef.current / 1000;
+              if (autoPlayRef.current) void video.play().catch(() => onMessage("预览已打开，点击画面即可播放"));
             }}
           />
           {showReticle && (

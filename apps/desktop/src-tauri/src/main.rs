@@ -5,7 +5,7 @@ use focusflow_editor_core::{
     CameraKeyframe, Timeline as EditorTimeline, VideoClip, timeline_from_keyframes,
 };
 use focusflow_focus_engine::{DirectorProfile, SmartFocusEngine};
-use focusflow_platform_windows::MouseTrackerHandle;
+use focusflow_platform_windows::{CaptureBounds, MouseTrackerHandle};
 use focusflow_project_store::{
     EditOperation, EditTimeline, FocusFlowProject, PROJECT_SCHEMA_VERSION, ProjectAssets,
     ProjectState, VideoClipEdit, load_edit_timeline, load_project, save_edit_timeline,
@@ -21,7 +21,9 @@ use std::{
     sync::Mutex,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
+
+mod hotkey;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -54,6 +56,7 @@ struct RecorderState {
     active: Mutex<Option<ActiveRecording>>,
     output_directory: Mutex<PathBuf>,
     director_profile: Mutex<DirectorProfile>,
+    bound_hotkey: Mutex<Option<String>>,
 }
 
 impl RecorderState {
@@ -62,6 +65,7 @@ impl RecorderState {
             active: Mutex::new(None),
             output_directory: Mutex::new(default_recordings_dir()),
             director_profile: Mutex::new(DirectorProfile::Clean),
+            bound_hotkey: Mutex::new(None),
         }
     }
 }
@@ -774,10 +778,157 @@ fn camera_source_indices(original: &CameraTimeline, clips: &[VideoClipEdit]) -> 
         .collect()
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureDisplay {
+    index: usize,
+    name: String,
+    label: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    primary: bool,
+}
+
+fn capture_displays(app: &tauri::AppHandle) -> Result<Vec<CaptureDisplay>, String> {
+    let mut monitors = app
+        .available_monitors()
+        .map_err(|_| "无法列出显示器。".to_string())?;
+    monitors.sort_by(|left, right| {
+        let left_position = left.position();
+        let right_position = right.position();
+        left_position
+            .y
+            .cmp(&right_position.y)
+            .then(left_position.x.cmp(&right_position.x))
+            .then(left.name().cmp(&right.name()))
+    });
+    let primary = app.primary_monitor().ok().flatten();
+    Ok(monitors
+        .into_iter()
+        .enumerate()
+        .map(|(index, monitor)| {
+            let position = monitor.position();
+            let size = monitor.size();
+            let name = monitor.name().cloned().unwrap_or_default();
+            let primary = primary.as_ref().is_some_and(|candidate| {
+                candidate.position() == position
+                    && candidate.size() == size
+                    && candidate.name() == monitor.name()
+            });
+            let label = focusflow_recorder::capture_display_label(
+                index,
+                &name,
+                size.width,
+                size.height,
+                primary,
+            );
+            CaptureDisplay {
+                index,
+                name,
+                label,
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+                primary,
+            }
+        })
+        .collect())
+}
+
+fn selected_capture_region(
+    app: &tauri::AppHandle,
+    display_index: Option<usize>,
+    display_name: Option<&str>,
+) -> Result<Option<focusflow_recorder::GdigrabRegion>, String> {
+    let displays = capture_displays(app)?;
+    let names = displays
+        .iter()
+        .map(|display| display.name.as_str())
+        .collect::<Vec<_>>();
+    let selected =
+        focusflow_recorder::resolve_display_selection(&names, display_index, display_name)
+            .map_err(ToString::to_string)?;
+    let Some(index) = selected else {
+        return Ok(None);
+    };
+    let display = displays
+        .get(index)
+        .ok_or_else(|| "所选显示器已断开，请重新选择。".to_string())?;
+    match focusflow_recorder::gdigrab_region(display.x, display.y, display.width, display.height) {
+        Some(region) => Ok(Some(region)),
+        None => Err("所选显示器尺寸无效，无法录制。".to_string()),
+    }
+}
+
+fn capture_bounds_for(region: &focusflow_recorder::GdigrabRegion) -> Result<CaptureBounds, String> {
+    Ok(CaptureBounds {
+        x: region.offset_x,
+        y: region.offset_y,
+        width: i32::try_from(region.width).map_err(|_| "显示器宽度无效".to_string())?,
+        height: i32::try_from(region.height).map_err(|_| "显示器高度无效".to_string())?,
+    })
+}
+
+#[tauri::command]
+fn list_capture_displays(app: tauri::AppHandle) -> Result<Vec<CaptureDisplay>, String> {
+    capture_displays(&app)
+}
+
+#[tauri::command]
+fn bind_hotkey(
+    app: tauri::AppHandle,
+    shortcut: String,
+    state: State<'_, RecorderState>,
+) -> Result<(), String> {
+    let normalized = shortcut.trim().to_ascii_uppercase();
+    let previous = state
+        .bound_hotkey
+        .lock()
+        .map_err(|_| "快捷键状态不可用".to_string())?
+        .clone();
+    match hotkey::bind_global_hotkey(&app, &normalized, previous.as_deref()) {
+        Ok(()) => {
+            *state
+                .bound_hotkey
+                .lock()
+                .map_err(|_| "快捷键状态不可用".to_string())? = Some(normalized);
+            Ok(())
+        }
+        Err(error) => {
+            if let hotkey::HotkeyBindError::NotRegistered {
+                restored: false, ..
+            } = &error
+                && let Ok(mut slot) = state.bound_hotkey.lock()
+            {
+                *slot = None;
+            }
+            Err(error.message().to_string())
+        }
+    }
+}
+
+#[tauri::command]
+fn open_recorded_video(path: String) -> Result<(), String> {
+    let file = PathBuf::from(&path);
+    if !file.is_file() {
+        return Err("找不到录制视频，无法打开。".to_string());
+    }
+    Command::new("explorer")
+        .arg(file)
+        .spawn()
+        .map_err(|_| "无法打开录制视频。".to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn start_recording(
     app: tauri::AppHandle,
     state: State<'_, RecorderState>,
+    display_index: Option<usize>,
+    display_name: Option<String>,
 ) -> Result<RecorderStatus, String> {
     let mut active = state
         .active
@@ -798,6 +949,7 @@ fn start_recording(
         .director_profile
         .lock()
         .map_err(|_| "导演风格状态不可用".to_string())?;
+    let capture_region = selected_capture_region(&app, display_index, display_name.as_deref())?;
     let output_path = new_output_path(&output_directory)?;
     let mouse_events_path = output_path.with_extension("mouse.jsonl");
     let camera_timeline_path = output_path.with_extension("camera.json");
@@ -849,16 +1001,28 @@ fn start_recording(
         .try_clone()
         .map_err(|error| format!("无法初始化录制日志：{error}"))?;
 
-    let process_result = command(&ffmpeg)
+    let mut capture = command(&ffmpeg);
+    capture.args([
+        "-hide_banner",
+        "-y",
+        "-f",
+        "gdigrab",
+        "-framerate",
+        "60",
+        "-draw_mouse",
+        "1",
+    ]);
+    if let Some(region) = &capture_region {
+        capture
+            .arg("-offset_x")
+            .arg(region.offset_x.to_string())
+            .arg("-offset_y")
+            .arg(region.offset_y.to_string())
+            .arg("-video_size")
+            .arg(format!("{}x{}", region.width, region.height));
+    }
+    let process_result = capture
         .args([
-            "-hide_banner",
-            "-y",
-            "-f",
-            "gdigrab",
-            "-framerate",
-            "60",
-            "-draw_mouse",
-            "1",
             "-rtbufsize",
             "512M",
             "-i",
@@ -880,17 +1044,22 @@ fn start_recording(
         .stderr(Stdio::from(log))
         .spawn();
     let process = process_result.map_err(|error| format!("无法启动屏幕录制：{error}"))?;
-    let mouse_tracker = match MouseTrackerHandle::start(&mouse_events_path, recording_origin) {
-        Ok(tracker) => tracker,
-        Err(error) => {
-            let mut process = process;
-            if let Some(stdin) = process.stdin.as_mut() {
-                let _ = stdin.write_all(b"q\n");
+    let mouse_bounds = capture_region
+        .as_ref()
+        .map(capture_bounds_for)
+        .transpose()?;
+    let mouse_tracker =
+        match MouseTrackerHandle::start(&mouse_events_path, recording_origin, mouse_bounds) {
+            Ok(tracker) => tracker,
+            Err(error) => {
+                let mut process = process;
+                if let Some(stdin) = process.stdin.as_mut() {
+                    let _ = stdin.write_all(b"q\n");
+                }
+                let _ = process.wait();
+                return Err(error);
             }
-            let _ = process.wait();
-            return Err(error);
-        }
-    };
+        };
 
     *active = Some(ActiveRecording {
         process,
@@ -1018,7 +1187,15 @@ async fn stop_recording(state: State<'_, RecorderState>) -> Result<RecorderStatu
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        let _ = app.emit("focusflow-hotkey", "pressed");
+                    }
+                })
+                .build(),
+        )
         .manage(RecorderState::new())
         .invoke_handler(tauri::generate_handler![
             recorder_status,
@@ -1030,6 +1207,9 @@ fn main() {
             update_video_clips,
             save_studio_edits,
             reset_camera_edits,
+            list_capture_displays,
+            bind_hotkey,
+            open_recorded_video,
             start_recording,
             stop_recording
         ])
