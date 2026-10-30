@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/desktop/src-tauri",
+    "crates/domain",
+    "crates/recorder",
+    "crates/tracker",
+    "crates/focus_engine",
+    "crates/renderer",
+    "crates/media",
+    "crates/project_store",
+    "crates/editor_core",
+    "crates/platform_windows",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
