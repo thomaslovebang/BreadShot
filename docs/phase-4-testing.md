@@ -1,5 +1,7 @@
 # Phase 4 mouse tracking test
 
+> Phase 9 is the current product stage. This file is a historical test note.
+
 1. Start FocusFlow with `npm run tauri dev`.
 2. Record 15–30 seconds while moving slowly, moving quickly, pausing, left-clicking, and right-clicking.
 3. Stop the recording.

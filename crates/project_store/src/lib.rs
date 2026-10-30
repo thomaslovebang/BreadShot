@@ -1,5 +1,6 @@
 #![doc = "Open, recoverable FocusFlow project persistence."]
 
+use focusflow_domain::CameraTimeline;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -80,6 +81,24 @@ pub enum EditOperation {
     SetVideoClips {
         clips: Vec<VideoClipEdit>,
     },
+    /// Replaces the rendered camera path. The automatic `camera.json` stays intact.
+    SetCameraTimeline {
+        timeline: CameraTimeline,
+    },
+}
+
+impl EditTimeline {
+    /// Returns the latest manual camera timeline, when the workbench has exported one.
+    #[must_use]
+    pub fn replaced_camera_timeline(&self) -> Option<&CameraTimeline> {
+        self.operations
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                EditOperation::SetCameraTimeline { timeline } => Some(timeline),
+                _ => None,
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +283,53 @@ mod tests {
         };
         save_edit_timeline(&path, &timeline).unwrap();
         assert_eq!(load_edit_timeline(&path).unwrap(), timeline);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn manual_camera_timeline_round_trips_and_replaces_previous() {
+        use focusflow_domain::{
+            CameraEasing, CameraPose, CameraSegment, CameraTimeline, FocusReason, NormalizedPoint,
+        };
+
+        let pose = CameraPose {
+            center: NormalizedPoint { x: 0.4, y: 0.6 },
+            zoom: 1.4,
+        };
+        let timeline = CameraTimeline {
+            schema_version: 1,
+            duration_ms: 1_000,
+            segments: vec![CameraSegment {
+                start_ms: 0,
+                end_ms: 1_000,
+                from: pose,
+                to: pose,
+                easing: CameraEasing::Linear,
+                reason: FocusReason::Transition,
+            }],
+        };
+        let edits = EditTimeline {
+            schema_version: PROJECT_SCHEMA_VERSION,
+            operations: vec![
+                EditOperation::CameraOverride {
+                    segment_index: 0,
+                    center_x: 0.2,
+                    center_y: 0.2,
+                    zoom: 1.2,
+                },
+                EditOperation::SetCameraTimeline {
+                    timeline: timeline.clone(),
+                },
+            ],
+        };
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("focusflow-manual-camera-{nonce}.json"));
+        save_edit_timeline(&path, &edits).unwrap();
+        let loaded = load_edit_timeline(&path).unwrap();
+        assert_eq!(loaded.replaced_camera_timeline(), Some(&timeline));
         fs::remove_file(path).unwrap();
     }
 }

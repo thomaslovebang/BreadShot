@@ -1,5 +1,7 @@
 # Phase 3 Windows recording test
 
+> Phase 9 is the current product stage. This file is a historical test note.
+
 ## Start
 
 From `apps/desktop`, run `npm run tauri dev`.

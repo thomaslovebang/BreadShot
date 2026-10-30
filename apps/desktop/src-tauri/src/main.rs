@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use focusflow_domain::CameraTimeline;
-use focusflow_editor_core::{Timeline as EditorTimeline, VideoClip};
+use focusflow_editor_core::{
+    CameraKeyframe, Timeline as EditorTimeline, VideoClip, timeline_from_keyframes,
+};
 use focusflow_focus_engine::{DirectorProfile, SmartFocusEngine};
 use focusflow_platform_windows::MouseTrackerHandle;
 use focusflow_project_store::{
@@ -24,7 +26,15 @@ use tauri::{Manager, State};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+#[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
 
 struct ActiveRecording {
     process: Child,
@@ -78,6 +88,9 @@ struct StudioProject {
     final_video_path: String,
     duration_ms: u64,
     camera_timeline: CameraTimeline,
+    /// Automatic camera path before manual keyframe edits, in the same timebase as `camera_timeline`.
+    baseline_camera_timeline: CameraTimeline,
+    source_video_path: String,
     video_clips: Vec<VideoClipEdit>,
     camera_segment_source_indices: Vec<usize>,
     preview_revision: u64,
@@ -136,12 +149,11 @@ fn ffmpeg_path(app: &tauri::AppHandle) -> Option<PathBuf> {
         return Some(path);
     }
 
-    let status = Command::new("ffmpeg")
+    let status = command("ffmpeg")
         .arg("-version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
         .status();
 
     matches!(status, Ok(result) if result.success()).then(|| PathBuf::from("ffmpeg"))
@@ -366,11 +378,11 @@ fn load_studio_project(app: tauri::AppHandle, path: String) -> Result<StudioProj
     let camera_path = parent.join(&project.assets.camera_timeline);
     let camera_file =
         File::open(&camera_path).map_err(|error| format!("无法读取项目镜头时间线：{error}"))?;
-    let mut camera_timeline: CameraTimeline = serde_json::from_reader(BufReader::new(camera_file))
-        .map_err(|error| format!("项目镜头时间线无效：{error}"))?;
+    let automatic_timeline: CameraTimeline =
+        serde_json::from_reader(BufReader::new(camera_file))
+            .map_err(|error| format!("项目镜头时间线无效：{error}"))?;
     let edit_path = parent.join(&project.assets.edit_timeline);
     let edits = load_edit_timeline(&edit_path)?;
-    apply_camera_overrides(&mut camera_timeline, &edits)?;
     let video_clips = edits
         .operations
         .iter()
@@ -383,21 +395,45 @@ fn load_studio_project(app: tauri::AppHandle, path: String) -> Result<StudioProj
             vec![VideoClipEdit {
                 id: "clip-1".to_string(),
                 source_start_ms: 0,
-                source_end_ms: camera_timeline.duration_ms,
+                source_end_ms: automatic_timeline.duration_ms,
             }]
         });
     let has_video_edits = edits
         .operations
         .iter()
         .any(|operation| matches!(operation, EditOperation::SetVideoClips { .. }));
-    let camera_segment_source_indices = if has_video_edits {
-        camera_source_indices(&camera_timeline, &video_clips)
+    let baseline_camera_timeline = if has_video_edits {
+        remap_camera_timeline(&automatic_timeline, &video_clips)
     } else {
-        (0..camera_timeline.segments.len()).collect()
+        automatic_timeline.clone()
     };
-    if has_video_edits {
-        camera_timeline = remap_camera_timeline(&camera_timeline, &video_clips);
-    }
+    let (camera_timeline, camera_segment_source_indices) =
+        if let Some(manual) = edits.replaced_camera_timeline() {
+            let timeline = manual.clone();
+            let indices = (0..timeline.segments.len()).collect();
+            (timeline, indices)
+        } else {
+            let mut timeline = automatic_timeline;
+            apply_camera_overrides(&mut timeline, &edits)?;
+            let indices = if has_video_edits {
+                camera_source_indices(&timeline, &video_clips)
+            } else {
+                (0..timeline.segments.len()).collect()
+            };
+            if has_video_edits {
+                timeline = remap_camera_timeline(&timeline, &video_clips);
+            }
+            (timeline, indices)
+        };
+    let source_video = parent.join(&project.assets.source_video);
+    let source_video_path = if source_video.is_file() {
+        app.asset_protocol_scope()
+            .allow_file(&source_video)
+            .map_err(|error| format!("无法授权原始视频预览：{error}"))?;
+        source_video.display().to_string()
+    } else {
+        String::new()
+    };
     app.asset_protocol_scope()
         .allow_file(&preview_path)
         .map_err(|error| format!("无法授权本地视频预览：{error}"))?;
@@ -407,6 +443,8 @@ fn load_studio_project(app: tauri::AppHandle, path: String) -> Result<StudioProj
         final_video_path: preview_path.display().to_string(),
         duration_ms: camera_timeline.duration_ms,
         camera_timeline,
+        baseline_camera_timeline,
+        source_video_path,
         video_clips,
         camera_segment_source_indices,
         preview_revision,
@@ -530,9 +568,12 @@ async fn update_video_clips(
             .unwrap_or_else(|| std::path::Path::new("."));
         let edit_path = parent.join(&project.assets.edit_timeline);
         let mut edits = load_edit_timeline(&edit_path)?;
-        edits
-            .operations
-            .retain(|operation| !matches!(operation, EditOperation::SetVideoClips { .. }));
+        edits.operations.retain(|operation| {
+            !matches!(
+                operation,
+                EditOperation::SetVideoClips { .. } | EditOperation::SetCameraTimeline { .. }
+            )
+        });
         edits
             .operations
             .push(EditOperation::SetVideoClips { clips });
@@ -558,7 +599,7 @@ fn render_project_edits(
         .map_err(|error| format!("无法读取原始镜头时间线：{error}"))?;
     let mut timeline: CameraTimeline = serde_json::from_reader(BufReader::new(camera_file))
         .map_err(|error| format!("原始镜头时间线无效：{error}"))?;
-    apply_camera_overrides(&mut timeline, edits)?;
+    let manual = edits.replaced_camera_timeline().cloned();
     let clips = edits
         .operations
         .iter()
@@ -572,11 +613,84 @@ fn render_project_edits(
     if let Some(clips) = clips {
         let edited_source = project_path.with_extension("edit-source.mp4");
         render_clip_sequence(ffmpeg, &source, &edited_source, clips)?;
-        let edited_timeline = remap_camera_timeline(&timeline, clips);
+        let edited_timeline = if let Some(manual) = manual {
+            manual
+        } else {
+            apply_camera_overrides(&mut timeline, edits)?;
+            remap_camera_timeline(&timeline, clips)
+        };
         FfmpegRenderer::new(ffmpeg, ffprobe).render(&edited_source, &edited_timeline, &final_video)
+    } else if let Some(manual) = manual {
+        FfmpegRenderer::new(ffmpeg, ffprobe).render(&source, &manual, &final_video)
     } else {
+        apply_camera_overrides(&mut timeline, edits)?;
         FfmpegRenderer::new(ffmpeg, ffprobe).render(&source, &timeline, &final_video)
     }
+}
+
+#[tauri::command]
+async fn save_studio_edits(
+    app: tauri::AppHandle,
+    project_path: String,
+    keyframes: Vec<CameraKeyframe>,
+) -> Result<StudioProject, String> {
+    let timeline = timeline_from_keyframes(&keyframes)?;
+    let project_path = PathBuf::from(project_path);
+    let ffmpeg = ffmpeg_path(&app).ok_or_else(|| "未找到 FFmpeg".to_string())?;
+    let ffprobe = matching_ffprobe(&ffmpeg);
+    let render_project_path = project_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = load_project(&render_project_path)?;
+        let parent = render_project_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let edit_path = parent.join(&project.assets.edit_timeline);
+        let mut edits = load_edit_timeline(&edit_path)?;
+        edits.operations.retain(|operation| {
+            !matches!(
+                operation,
+                EditOperation::SetCameraTimeline { .. } | EditOperation::CameraOverride { .. }
+            )
+        });
+        edits
+            .operations
+            .push(EditOperation::SetCameraTimeline { timeline });
+        render_project_edits(&ffmpeg, &ffprobe, &render_project_path, &project, &edits)?;
+        save_edit_timeline(&edit_path, &edits)
+    })
+    .await
+    .map_err(|error| format!("后台重新渲染任务失败：{error}"))??;
+    load_studio_project(app, project_path.display().to_string())
+}
+
+#[tauri::command]
+async fn reset_camera_edits(
+    app: tauri::AppHandle,
+    project_path: String,
+) -> Result<StudioProject, String> {
+    let project_path = PathBuf::from(project_path);
+    let ffmpeg = ffmpeg_path(&app).ok_or_else(|| "未找到 FFmpeg".to_string())?;
+    let ffprobe = matching_ffprobe(&ffmpeg);
+    let render_project_path = project_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = load_project(&render_project_path)?;
+        let parent = render_project_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let edit_path = parent.join(&project.assets.edit_timeline);
+        let mut edits = load_edit_timeline(&edit_path)?;
+        edits.operations.retain(|operation| {
+            !matches!(
+                operation,
+                EditOperation::SetCameraTimeline { .. } | EditOperation::CameraOverride { .. }
+            )
+        });
+        render_project_edits(&ffmpeg, &ffprobe, &render_project_path, &project, &edits)?;
+        save_edit_timeline(&edit_path, &edits)
+    })
+    .await
+    .map_err(|error| format!("后台重新渲染任务失败：{error}"))??;
+    load_studio_project(app, project_path.display().to_string())
 }
 
 fn render_clip_sequence(
@@ -597,7 +711,7 @@ fn render_clip_sequence(
         .map(|index| format!("[v{index}]"))
         .collect::<String>();
     filters.push(format!("{inputs}concat=n={}:v=1:a=0[outv]", clips.len()));
-    let status = Command::new(ffmpeg)
+    let status = command(ffmpeg)
         .args(["-hide_banner", "-y", "-i"])
         .arg(source)
         .args(["-filter_complex", &filters.join(";"), "-map", "[outv]"])
@@ -608,7 +722,6 @@ fn render_clip_sequence(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
         .status()
         .map_err(|error| format!("无法启动片段渲染：{error}"))?;
     status
@@ -736,7 +849,7 @@ fn start_recording(
         .try_clone()
         .map_err(|error| format!("无法初始化录制日志：{error}"))?;
 
-    let process_result = Command::new(&ffmpeg)
+    let process_result = command(&ffmpeg)
         .args([
             "-hide_banner",
             "-y",
@@ -765,7 +878,6 @@ fn start_recording(
         .stdin(Stdio::piped())
         .stdout(Stdio::from(log_copy))
         .stderr(Stdio::from(log))
-        .creation_flags(CREATE_NO_WINDOW)
         .spawn();
     let process = process_result.map_err(|error| format!("无法启动屏幕录制：{error}"))?;
     let mouse_tracker = match MouseTrackerHandle::start(&mouse_events_path, recording_origin) {
@@ -916,6 +1028,8 @@ fn main() {
             load_studio_project,
             update_camera_segment,
             update_video_clips,
+            save_studio_edits,
+            reset_camera_edits,
             start_recording,
             stop_recording
         ])

@@ -1,5 +1,7 @@
 # Phase 6 final-video test
 
+> Phase 9 is the current product stage. This file is a historical test note. The automatic record-to-final-MP4 path described here still runs.
+
 ## How to test
 
 1. Start the app with `npm run tauri dev`.
