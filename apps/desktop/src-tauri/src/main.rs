@@ -21,7 +21,7 @@ use std::{
     sync::Mutex,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -54,6 +54,8 @@ struct RecorderState {
     active: Mutex<Option<ActiveRecording>>,
     output_directory: Mutex<PathBuf>,
     director_profile: Mutex<DirectorProfile>,
+    last_final_video: Mutex<Option<PathBuf>>,
+    last_source_video: Mutex<Option<PathBuf>>,
 }
 
 impl RecorderState {
@@ -62,8 +64,34 @@ impl RecorderState {
             active: Mutex::new(None),
             output_directory: Mutex::new(default_recordings_dir()),
             director_profile: Mutex::new(DirectorProfile::Clean),
+            last_final_video: Mutex::new(None),
+            last_source_video: Mutex::new(None),
         }
     }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcessingProgress {
+    stage: &'static str,
+    progress: u8,
+    message: &'static str,
+}
+
+fn emit_processing_progress(
+    app: &tauri::AppHandle,
+    stage: &'static str,
+    progress: u8,
+    message: &'static str,
+) {
+    let _ = app.emit(
+        "processing-progress",
+        ProcessingProgress {
+            stage,
+            progress,
+            message,
+        },
+    );
 }
 
 #[derive(Serialize)]
@@ -211,6 +239,11 @@ fn recorder_status(app: tauri::AppHandle, state: State<'_, RecorderState>) -> Re
         .director_profile
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let last_final_video = state
+        .last_final_video
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     RecorderStatus {
         is_recording: active.is_some(),
         ffmpeg_available: ffmpeg_path(&app).is_some(),
@@ -226,7 +259,8 @@ fn recorder_status(app: tauri::AppHandle, state: State<'_, RecorderState>) -> Re
             .map(|recording| recording.camera_timeline_path.display().to_string()),
         final_video_path: active
             .as_ref()
-            .map(|recording| recording.final_video_path.display().to_string()),
+            .map(|recording| recording.final_video_path.display().to_string())
+            .or_else(|| last_final_video.map(|path| path.display().to_string())),
         project_path: active
             .as_ref()
             .map(|recording| recording.project_path.display().to_string()),
@@ -265,6 +299,12 @@ fn set_output_directory(
         .director_profile
         .lock()
         .map_err(|_| "导演风格状态不可用".to_string())?;
+    let last_final_video = state
+        .last_final_video
+        .lock()
+        .map_err(|_| "最近视频状态不可用".to_string())?
+        .as_ref()
+        .map(|path| path.display().to_string());
     Ok(RecorderStatus {
         is_recording: false,
         ffmpeg_available: true,
@@ -272,7 +312,7 @@ fn set_output_directory(
         output_directory: output_directory.display().to_string(),
         mouse_events_path: None,
         camera_timeline_path: None,
-        final_video_path: None,
+        final_video_path: last_final_video,
         project_path: None,
         director_profile,
     })
@@ -923,6 +963,14 @@ fn start_recording(
         director_profile,
         mouse_tracker: Some(mouse_tracker),
     });
+    *state
+        .last_source_video
+        .lock()
+        .map_err(|_| "最近录制状态不可用".to_string())? = Some(output_path.clone());
+    *state
+        .last_final_video
+        .lock()
+        .map_err(|_| "最近视频状态不可用".to_string())? = None;
     Ok(RecorderStatus {
         is_recording: true,
         ffmpeg_available: true,
@@ -936,20 +984,29 @@ fn start_recording(
     })
 }
 
-fn stop_active_recording(recording: &mut ActiveRecording) -> Result<(), String> {
+fn stop_active_recording(
+    app: &tauri::AppHandle,
+    recording: &mut ActiveRecording,
+) -> Result<(), String> {
+    emit_processing_progress(app, "saving", 12, "正在保存原始录制…");
     recording.project.state = ProjectState::Processing;
     save_project(&recording.project_path, &recording.project)?;
-    let result = stop_and_render(recording);
+    let result = stop_and_render(app, recording);
     if let Err(error) = &result {
         recording.project.state = ProjectState::Failed;
         let _ = save_project(&recording.project_path, &recording.project);
         return Err(error.clone());
     }
     recording.project.state = ProjectState::Ready;
-    save_project(&recording.project_path, &recording.project)
+    save_project(&recording.project_path, &recording.project)?;
+    emit_processing_progress(app, "complete", 100, "自动运镜视频已生成");
+    Ok(())
 }
 
-fn stop_and_render(recording: &mut ActiveRecording) -> Result<(), String> {
+fn stop_and_render(
+    app: &tauri::AppHandle,
+    recording: &mut ActiveRecording,
+) -> Result<(), String> {
     let tracker_result = recording
         .mouse_tracker
         .take()
@@ -974,15 +1031,69 @@ fn stop_and_render(recording: &mut ActiveRecording) -> Result<(), String> {
         ));
     }
     tracker_result?;
+    emit_processing_progress(app, "analyzing", 42, "正在分析鼠标动作…");
     let timeline = generate_camera_timeline(recording)?;
     recording.project.duration_ms = Some(timeline.duration_ms);
     save_project(&recording.project_path, &recording.project)?;
+    emit_processing_progress(app, "rendering", 64, "正在生成自动缩放和运镜…");
     let renderer = FfmpegRenderer::new(&recording.ffmpeg_path, &recording.ffprobe_path);
     renderer.render(
         &recording.output_path,
         &timeline,
         &recording.final_video_path,
     )?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_final_video(state: State<'_, RecorderState>) -> Result<(), String> {
+    let path = state
+        .last_final_video
+        .lock()
+        .map_err(|_| "最近视频状态不可用".to_string())?
+        .clone()
+        .ok_or_else(|| "还没有可以播放的成片".to_string())?;
+    if !path.is_file() {
+        return Err("成片文件已被移动或删除".to_string());
+    }
+    command("rundll32.exe")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(path)
+        .spawn()
+        .map_err(|error| format!("无法打开视频：{error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn reveal_output(state: State<'_, RecorderState>) -> Result<(), String> {
+    let final_video = state
+        .last_final_video
+        .lock()
+        .map_err(|_| "最近视频状态不可用".to_string())?
+        .clone();
+    let output_directory = state
+        .output_directory
+        .lock()
+        .map_err(|_| "保存位置状态不可用".to_string())?
+        .clone();
+    let source_video = state
+        .last_source_video
+        .lock()
+        .map_err(|_| "最近录制状态不可用".to_string())?
+        .clone();
+
+    let mut explorer = command("explorer.exe");
+    if let Some(path) = final_video
+        .filter(|path| path.is_file())
+        .or_else(|| source_video.filter(|path| path.is_file()))
+    {
+        explorer.arg(format!("/select,{}", path.display()));
+    } else {
+        explorer.arg(output_directory);
+    }
+    explorer
+        .spawn()
+        .map_err(|error| format!("无法打开保存位置：{error}"))?;
     Ok(())
 }
 
@@ -999,7 +1110,10 @@ fn generate_camera_timeline(recording: &ActiveRecording) -> Result<CameraTimelin
 }
 
 #[tauri::command]
-async fn stop_recording(state: State<'_, RecorderState>) -> Result<RecorderStatus, String> {
+async fn stop_recording(
+    app: tauri::AppHandle,
+    state: State<'_, RecorderState>,
+) -> Result<RecorderStatus, String> {
     let mut recording = {
         let mut active = state
             .active
@@ -1015,8 +1129,9 @@ async fn stop_recording(state: State<'_, RecorderState>) -> Result<RecorderStatu
         .map_err(|_| "保存位置状态不可用".to_string())?
         .display()
         .to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        stop_active_recording(&mut recording)?;
+    let processing_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<RecorderStatus, String> {
+        stop_active_recording(&processing_app, &mut recording)?;
         Ok(RecorderStatus {
             is_recording: false,
             ffmpeg_available: true,
@@ -1030,7 +1145,14 @@ async fn stop_recording(state: State<'_, RecorderState>) -> Result<RecorderStatu
         })
     })
     .await
-    .map_err(|error| format!("后台视频处理任务失败：{error}"))?
+    .map_err(|error| format!("后台视频处理任务失败：{error}"))??;
+    if let Some(path) = result.final_video_path.as_ref() {
+        *state
+            .last_final_video
+            .lock()
+            .map_err(|_| "最近视频状态不可用".to_string())? = Some(PathBuf::from(path));
+    }
+    Ok(result)
 }
 
 fn main() {
@@ -1049,7 +1171,9 @@ fn main() {
             save_studio_edits,
             reset_camera_edits,
             start_recording,
-            stop_recording
+            stop_recording,
+            open_final_video,
+            reveal_output
         ])
         .build(tauri::generate_context!())
         .expect("failed to build FocusFlow");
@@ -1059,7 +1183,7 @@ fn main() {
             let state = handle.state::<RecorderState>();
             if let Ok(mut active) = state.active.lock() {
                 if let Some(mut recording) = active.take() {
-                    let _ = stop_active_recording(&mut recording);
+                    let _ = stop_active_recording(handle, &mut recording);
                 }
             }
         }

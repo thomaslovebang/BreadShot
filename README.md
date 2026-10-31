@@ -2,7 +2,7 @@
 
 FocusFlow is a focused Windows screen recorder. It records the screen and mouse locally, turns mouse actions into automatic zoom and pan, and exports a watermark-free MP4.
 
-The current product has one workflow: choose a save folder and a start/stop shortcut, record for as long as needed, then wait for the automatically directed video.
+The current product has one workflow: choose a display, save folder, and start/stop shortcut; record for as long as needed; then follow the local processing stages and play the automatically directed video.
 
 ## Run the desktop app
 
@@ -29,6 +29,9 @@ FFmpeg has to be available as `ffmpeg.exe` beside the app, under `apps/desktop/s
 - Select one display to record on multi-monitor systems.
 - User-selected output folder.
 - One configurable global shortcut that starts and stops recording.
+- Visible save, mouse-analysis, and automatic-camera rendering stages.
+- A finished-video result with Play Video and Open Folder actions.
+- Recoverable error feedback that keeps the saved source recording accessible.
 
 Manual timelines, project opening, clip editing, camera keyframes, and director-style settings are outside the current product.
 

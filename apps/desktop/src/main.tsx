@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { availableMonitors, getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
@@ -21,6 +22,12 @@ type CaptureDisplay = {
   y: number;
   width: number;
   height: number;
+};
+
+type ProcessingProgress = {
+  stage: "saving" | "analyzing" | "rendering" | "complete";
+  progress: number;
+  message: string;
 };
 
 const DEFAULT_SHORTCUT = "F8";
@@ -48,6 +55,10 @@ function fileName(path: string) {
   return path.split(/[\\/]/).pop() || path;
 }
 
+function readableError(error: unknown) {
+  return String(error).replace(/^Error:\s*/i, "");
+}
+
 function App() {
   const [status, setStatus] = useState(initialStatus);
   const [elapsed, setElapsed] = useState(0);
@@ -58,6 +69,8 @@ function App() {
   const [selectedDisplayId, setSelectedDisplayId] = useState("");
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
   const [capturedShortcut, setCapturedShortcut] = useState<string | null>(null);
+  const [processing, setProcessing] = useState<ProcessingProgress | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const statusRef = useRef(status);
   const busyRef = useRef(busy);
   const shortcutRef = useRef(shortcut);
@@ -68,6 +81,15 @@ function App() {
   useEffect(() => { busyRef.current = busy; }, [busy]);
   useEffect(() => { shortcutRef.current = shortcut; }, [shortcut]);
   useEffect(() => { shortcutDialogRef.current = shortcutDialogOpen; }, [shortcutDialogOpen]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<ProcessingProgress>("processing-progress", (event) => {
+      setProcessing(event.payload);
+      setMessage(event.payload.message);
+    }).then((dispose) => { unlisten = dispose; });
+    return () => unlisten?.();
+  }, []);
 
   useEffect(() => {
     async function initialize() {
@@ -169,6 +191,8 @@ function App() {
     const appWindow = getCurrentWindow();
     busyRef.current = true;
     setBusy(true);
+    setFailure(null);
+    setProcessing(wasRecording ? { stage: "saving", progress: 5, message: "正在结束录制…" } : null);
     setMessage(wasRecording ? "正在根据鼠标动作生成自动运镜视频…" : "正在启动录制…");
 
     if (wasRecording) {
@@ -204,10 +228,14 @@ function App() {
         setElapsed(0);
         setMessage(`正在录制 · 按 ${shortcutRef.current} 结束`);
       } else {
+        setProcessing(null);
         setMessage("自动运镜视频已生成");
       }
     } catch (error) {
-      setMessage(String(error));
+      const description = readableError(error);
+      setFailure(description);
+      setProcessing(null);
+      setMessage(wasRecording ? "成片生成失败，但原始录制通常仍已保存" : "录制未能开始");
       await restoreWindow().catch(() => undefined);
     } finally {
       busyRef.current = false;
@@ -260,6 +288,22 @@ function App() {
     if (display) setMessage(`将录制 ${display.label}`);
   }
 
+  async function openFinalVideo() {
+    try {
+      await invoke("open_final_video");
+    } catch (error) {
+      setFailure(readableError(error));
+    }
+  }
+
+  async function revealOutput() {
+    try {
+      await invoke("reveal_output");
+    } catch (error) {
+      setFailure(readableError(error));
+    }
+  }
+
   return (
     <main className="shell">
       <section className="app-frame">
@@ -277,7 +321,26 @@ function App() {
               <div><span className="timer-label">录制时间</span><strong className="timer"><i />{formatElapsed(elapsed)}</strong></div>
               <button type="button" className="primary-button" disabled={busy || (!status.ffmpegAvailable && !status.isRecording)} onClick={() => void toggleRecording()}><span>{status.isRecording ? "■" : "●"}</span>{actionLabel}</button>
             </div>
-            <div className="promise-row"><span>不限时长</span><span>无水印 MP4</span><span>鼠标驱动自动缩放</span></div>
+            {busy && processing && (
+              <section className="processing-card" aria-live="polite">
+                <div className="processing-copy"><span className="spinner" /><div><strong>{processing.message}</strong><span>请保持 FocusFlow 运行，完成后即可播放</span></div><b>{processing.progress}%</b></div>
+                <div className="progress-track"><i style={{ width: `${processing.progress}%` }} /></div>
+              </section>
+            )}
+            {!busy && failure && (
+              <section className="failure-card" role="alert">
+                <div><strong>这次成片没有顺利生成</strong><span>{failure}</span></div>
+                <button type="button" className="secondary-button" onClick={() => void revealOutput()}>查看已保存文件</button>
+              </section>
+            )}
+            {!busy && !failure && status.finalVideoPath && (
+              <section className="success-card">
+                <div className="success-icon">✓</div>
+                <div className="success-copy"><strong>自动运镜视频已完成</strong><span title={status.finalVideoPath}>{fileName(status.finalVideoPath)}</span></div>
+                <div className="result-actions"><button type="button" className="primary-button compact" onClick={() => void openFinalVideo()}>播放视频</button><button type="button" className="secondary-button" onClick={() => void revealOutput()}>打开文件夹</button></div>
+              </section>
+            )}
+            {!busy && !failure && !status.finalVideoPath && <div className="promise-row"><span>不限时长</span><span>无水印 MP4</span><span>鼠标驱动自动缩放</span></div>}
           </section>
 
           <aside className="settings">
@@ -295,10 +358,6 @@ function App() {
             <div className="setting-row">
               <div><strong>开始 / 结束快捷键</strong><span>同一个按键切换录制状态</span></div>
               <div className="shortcut-control"><kbd>{shortcut}</kbd><button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => { setCapturedShortcut(null); setShortcutDialogOpen(true); }}>更改</button></div>
-            </div>
-            <div className="setting-row output-row">
-              <div><strong>最近生成的视频</strong><span title={status.finalVideoPath || ""}>{status.finalVideoPath ? fileName(status.finalVideoPath) : "完成录制后显示在这里"}</span></div>
-              <span className={status.finalVideoPath ? "result ready" : "result"}>{status.finalVideoPath ? "已完成" : "等待录制"}</span>
             </div>
           </aside>
         </div>
