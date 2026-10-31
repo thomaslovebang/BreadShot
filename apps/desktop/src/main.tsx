@@ -304,65 +304,79 @@ function App() {
     }
   }
 
+  const selectedDisplay = displays.find((display) => display.id === selectedDisplayId);
+
   return (
     <main className="shell">
       <section className="app-frame">
         <header className="topbar">
-          <div className="brand"><span className="brand-mark" /><strong>FocusFlow</strong></div>
-          <div className={`status-pill ${status.isRecording ? "live" : busy ? "working" : "ready"}`}><span />{status.isRecording ? "录制中" : busy ? "处理中" : "就绪"}</div>
+          <div className="brand">
+            <span className="brand-mark"><i /></span>
+            <div><strong>FocusFlow</strong><small>Automatic camera recorder</small></div>
+          </div>
+          <span className="alpha-badge">ALPHA</span>
+          <div className={`status-pill ${status.isRecording ? "live" : busy ? "working" : "ready"}`}><span />{status.isRecording ? "正在录制" : busy ? "正在处理" : "可以开始"}</div>
         </header>
 
         <div className="workspace">
           <section className="hero">
-            <p className="eyebrow">免费 · 无水印 · 不限制录制时长</p>
-            <h1>{status.isRecording ? "继续你的演示。" : "录完，自动得到会运镜的视频。"}</h1>
-            <p className="message">{message}</p>
+            <div className="hero-ambient one" /><div className="hero-ambient two" />
+            <p className="eyebrow"><i /> AUTOMATIC CAMERA RECORDER</p>
+            <h1>{status.isRecording ? <>正在录制，<em>专注演示就好。</em></> : <>按下录制，<em>镜头交给 FocusFlow。</em></>}</h1>
+            <p className="hero-subtitle">录制你的操作，自动生成平滑缩放与跟随镜头。</p>
+            <p className="message"><span />{message}</p>
             <div className={`record-console ${status.isRecording ? "is-recording" : ""}`}>
-              <div><span className="timer-label">录制时间</span><strong className="timer"><i />{formatElapsed(elapsed)}</strong></div>
-              <button type="button" className="primary-button" disabled={busy || (!status.ffmpegAvailable && !status.isRecording)} onClick={() => void toggleRecording()}><span>{status.isRecording ? "■" : "●"}</span>{actionLabel}</button>
+              <div className="capture-main">
+                <div className="timer-block"><span className="timer-label">{status.isRecording ? "RECORDING" : "DURATION"}</span><strong className="timer"><i />{formatElapsed(elapsed)}</strong></div>
+                <button type="button" className="primary-button record-action" disabled={busy || (!status.ffmpegAvailable && !status.isRecording)} onClick={() => void toggleRecording()}><span className="record-glyph">{status.isRecording ? "■" : ""}</span>{actionLabel}</button>
+              </div>
+              <div className="capture-foot"><span><kbd>{shortcut}</kbd> 随时开始或结束</span><span>{selectedDisplay ? selectedDisplay.label : "正在检测显示器"}</span></div>
             </div>
-            {busy && processing && (
-              <section className="processing-card" aria-live="polite">
-                <div className="processing-copy"><span className="spinner" /><div><strong>{processing.message}</strong><span>请保持 FocusFlow 运行，完成后即可播放</span></div><b>{processing.progress}%</b></div>
-                <div className="progress-track"><i style={{ width: `${processing.progress}%` }} /></div>
-              </section>
-            )}
-            {!busy && failure && (
-              <section className="failure-card" role="alert">
-                <div><strong>这次成片没有顺利生成</strong><span>{failure}</span></div>
-                <button type="button" className="secondary-button" onClick={() => void revealOutput()}>查看已保存文件</button>
-              </section>
-            )}
-            {!busy && !failure && status.finalVideoPath && (
-              <section className="success-card">
-                <div className="success-icon">✓</div>
-                <div className="success-copy"><strong>自动运镜视频已完成</strong><span title={status.finalVideoPath}>{fileName(status.finalVideoPath)}</span></div>
-                <div className="result-actions"><button type="button" className="primary-button compact" onClick={() => void openFinalVideo()}>播放视频</button><button type="button" className="secondary-button" onClick={() => void revealOutput()}>打开文件夹</button></div>
-              </section>
-            )}
-            {!busy && !failure && !status.finalVideoPath && <div className="promise-row"><span>不限时长</span><span>无水印 MP4</span><span>鼠标驱动自动缩放</span></div>}
+            <div className="outcome-slot">
+              {busy && processing && (
+                <section className="processing-card" aria-live="polite">
+                  <div className="processing-copy"><span className="spinner" /><div><strong>{processing.message}</strong><span>正在本机完成处理，请保持 FocusFlow 运行</span></div><b>{processing.progress}%</b></div>
+                  <div className="progress-track"><i style={{ width: `${processing.progress}%` }} /></div>
+                </section>
+              )}
+              {!busy && failure && (
+                <section className="failure-card" role="alert">
+                  <div><strong>这次成片没有顺利生成</strong><span>{failure}</span></div>
+                  <button type="button" className="secondary-button" onClick={() => void revealOutput()}>查看已保存文件</button>
+                </section>
+              )}
+              {!busy && !failure && status.finalVideoPath && (
+                <section className="success-card">
+                  <div className="success-icon">✓</div>
+                  <div className="success-copy"><strong>成片已准备好</strong><span title={status.finalVideoPath}>{fileName(status.finalVideoPath)}</span></div>
+                  <div className="result-actions"><button type="button" className="primary-button compact" onClick={() => void openFinalVideo()}>▶ 播放视频</button><button type="button" className="secondary-button" onClick={() => void revealOutput()}>打开文件夹</button></div>
+                </section>
+              )}
+              {!busy && !failure && !status.finalVideoPath && <div className="promise-row"><span>∞ 不限时长</span><span>◇ 无水印 MP4</span><span>⌁ 自动缩放跟随</span></div>}
+            </div>
           </section>
 
           <aside className="settings">
-            <div className="settings-heading"><span>录制设置</span><small>只需设置一次</small></div>
+            <div className="settings-heading"><div><span>录制设置</span><small>确认以下三项，即可开始</small></div><b>3</b></div>
             <div className="setting-row">
-              <div><strong>视频保存位置</strong><span title={status.outputDirectory}>{status.outputDirectory || "尚未设置"}</span></div>
+              <span className="setting-index">01</span><div className="setting-copy"><strong>保存位置</strong><span title={status.outputDirectory}>{status.outputDirectory || "尚未设置"}</span></div>
               <button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => void chooseOutputDirectory()}>选择</button>
             </div>
             <div className="setting-row">
-              <div><strong>录制显示器</strong><span>只录制选择的这一块屏幕</span></div>
+              <span className="setting-index">02</span><div className="setting-copy"><strong>录制显示器</strong><span>只捕获选择的这一块屏幕</span></div>
               <select className="display-select" value={selectedDisplayId} disabled={status.isRecording || busy} onChange={(event) => changeDisplay(event.target.value)}>
                 {displays.map((display) => <option key={display.id} value={display.id}>{display.label}</option>)}
               </select>
             </div>
             <div className="setting-row">
-              <div><strong>开始 / 结束快捷键</strong><span>同一个按键切换录制状态</span></div>
+              <span className="setting-index">03</span><div className="setting-copy"><strong>全局快捷键</strong><span>同一个按键开始与结束</span></div>
               <div className="shortcut-control"><kbd>{shortcut}</kbd><button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => { setCapturedShortcut(null); setShortcutDialogOpen(true); }}>更改</button></div>
             </div>
+            <div className="privacy-note"><span>⌾</span><div><strong>本机私密处理</strong><small>画面与鼠标数据不会上传</small></div></div>
           </aside>
         </div>
 
-        <footer><span>视频全程在本机处理</span><span>Windows · H.264 MP4</span></footer>
+        <footer><span>FocusFlow Alpha · Built for Windows</span><div><span>LOCAL PROCESSING</span><i /> <span>H.264 MP4</span><i /> <span>NO WATERMARK</span></div></footer>
       </section>
 
       {shortcutDialogOpen && (
