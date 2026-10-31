@@ -14,10 +14,7 @@ use windows::Win32::{
     Foundation::POINT,
     UI::{
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON},
-        WindowsAndMessaging::{
-            GetCursorPos, GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-        },
+        WindowsAndMessaging::GetCursorPos,
     },
 };
 
@@ -58,28 +55,19 @@ struct TraceEnd {
 }
 
 #[derive(Clone, Copy)]
-struct DesktopBounds {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
+pub struct CaptureBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
 }
 
-impl DesktopBounds {
-    fn query() -> Result<Self, String> {
-        // SAFETY: GetSystemMetrics has no pointer parameters and is safe to call on this Windows thread.
-        let bounds = unsafe {
-            Self {
-                x: GetSystemMetrics(SM_XVIRTUALSCREEN),
-                y: GetSystemMetrics(SM_YVIRTUALSCREEN),
-                width: GetSystemMetrics(SM_CXVIRTUALSCREEN),
-                height: GetSystemMetrics(SM_CYVIRTUALSCREEN),
-            }
-        };
-        if bounds.width <= 0 || bounds.height <= 0 {
-            return Err("无法获取 Windows 桌面尺寸".to_string());
+impl CaptureBounds {
+    pub fn new(x: i32, y: i32, width: i32, height: i32) -> Result<Self, String> {
+        if width <= 0 || height <= 0 {
+            return Err("选择的显示器尺寸无效".to_string());
         }
-        Ok(bounds)
+        Ok(Self { x, y, width, height })
     }
 
     fn normalize(self, point: POINT) -> (f64, f64) {
@@ -95,9 +83,8 @@ pub struct MouseTrackerHandle {
 }
 
 impl MouseTrackerHandle {
-    pub fn start(path: &Path, origin: Instant) -> Result<Self, String> {
+    pub fn start(path: &Path, origin: Instant, bounds: CaptureBounds) -> Result<Self, String> {
         let file = File::create(path).map_err(|error| format!("无法创建鼠标轨迹文件：{error}"))?;
-        let bounds = DesktopBounds::query()?;
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
 
@@ -126,7 +113,7 @@ impl MouseTrackerHandle {
 
 fn track_mouse(
     file: File,
-    bounds: DesktopBounds,
+    bounds: CaptureBounds,
     origin: Instant,
     stop: &AtomicBool,
 ) -> Result<(), String> {
@@ -235,7 +222,7 @@ fn button_is_down(button: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_K
 
 fn write_event(
     writer: &mut BufWriter<File>,
-    bounds: DesktopBounds,
+    bounds: CaptureBounds,
     origin: Instant,
     point: POINT,
     speed_px_s: f64,

@@ -1,15 +1,36 @@
 # FocusFlow
 
-FocusFlow is a Windows-first, local desktop tool that turns ordinary screen recordings into polished product demos using mouse-driven virtual camera motion.
+FocusFlow is a focused Windows screen recorder. It records the screen and mouse locally, turns mouse actions into automatic zoom and pan, and exports a watermark-free MP4.
 
-## V1 scope
+The current product has one workflow: choose a save folder and a start/stop shortcut, record for as long as needed, then wait for the automatically directed video.
 
-- Screen recording
-- Timestamped mouse tracking
-- Mouse-driven camera timeline generation
-- Local FFmpeg rendering to MP4
+## Run the desktop app
 
-The application uses Tauri 2, React, TypeScript, and a modular Rust workspace. V1 is Windows-only and has no cloud services, accounts, watermark, or editing timeline.
+From `apps/desktop` on Windows:
+
+```powershell
+npm install
+npm run tauri dev
+```
+
+Check the Rust workspace from the repository root:
+
+```powershell
+cargo check --workspace
+```
+
+FFmpeg has to be available as `ffmpeg.exe` beside the app, under `apps/desktop/src-tauri/bin`, in WinGet (`Gyan.FFmpeg.Essentials`), or on `PATH`. `ffprobe` is resolved next to that FFmpeg binary.
+
+## Current product scope
+
+- No artificial recording time limit.
+- No watermark.
+- Automatic zoom and pan generated from mouse clicks and movement.
+- Select one display to record on multi-monitor systems.
+- User-selected output folder.
+- One configurable global shortcut that starts and stops recording.
+
+Manual timelines, project opening, clip editing, camera keyframes, and director-style settings are outside the current product.
 
 ## Workspace
 
@@ -17,13 +38,17 @@ The application uses Tauri 2, React, TypeScript, and a modular Rust workspace. V
 - `crates/domain`: shared domain models
 - `crates/recorder`: recording contracts and session lifecycle
 - `crates/tracker`: mouse tracking contracts
-- `crates/focus_engine`: camera timeline generation
-- `crates/renderer`: video rendering contracts
+- `crates/focus_engine`: automatic camera timeline generation
+- `crates/editor_core`: retained experimental editing core; not exposed in the current app
+- `crates/renderer`: FFmpeg video rendering
 - `crates/media`: FFmpeg/FFprobe integration boundary
-- `crates/project_store`: project persistence boundary
+- `crates/project_store`: project and edit-timeline persistence
 - `crates/platform_windows`: Windows-specific adapters
-- `docs`: architecture and data contracts
+- `docs`: architecture, data contracts, and historical phase notes
 
-## Development status
+## Scope
 
-Phase 6 automatic rendering is implemented for development testing. Each recording produces a source MP4, synchronized mouse trace, deterministic camera timeline, and an automatically rendered final MP4 with eased virtual-camera motion.
+V1 is Windows-only. Processing stays on the machine: no cloud services, accounts, or watermark.
+
+Older phase write-ups under `docs/` are historical test and design notes.
+

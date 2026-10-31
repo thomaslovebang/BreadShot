@@ -3,10 +3,11 @@
   "productName": "FocusFlow",
   "version": "0.1.0",
   "identifier": "app.focusflow.desktop",
-  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
+  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://127.0.0.1:1470", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
   "app": {
-    "windows": [{ "title": "FocusFlow", "width": 1120, "height": 720, "minWidth": 720, "minHeight": 480 }],
+    "windows": [{ "title": "FocusFlow", "width": 1200, "height": 820, "minWidth": 880, "minHeight": 640 }],
     "security": { "assetProtocol": { "enable": true, "scope": [] } }
   },
   "bundle": { "active": true, "targets": ["msi", "nsis"] }
 }
+

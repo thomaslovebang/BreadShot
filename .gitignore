@@ -1,6 +1,14 @@
 /target/
-/node_modules/
-/dist/
+**/node_modules/
+**/dist/
+/work/
+*.mp4
+*.jsonl
+*.focusflow
+*.camera.json
+*.edit.json
+*.filter.txt
+*.render.log
 *.log
 *.tmp
 .DS_Store

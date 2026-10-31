@@ -40,6 +40,15 @@ impl FfmpegRenderer {
     }
 
     fn probe(&self, source: &Path) -> Result<VideoInfo, String> {
+        match self.probe_with_ffprobe(source) {
+            Ok(info) => Ok(info),
+            Err(ffprobe_error) => self.probe_with_ffmpeg(source).map_err(|ffmpeg_error| {
+                format!("无法读取视频信息。FFprobe：{ffprobe_error}；FFmpeg：{ffmpeg_error}")
+            }),
+        }
+    }
+
+    fn probe_with_ffprobe(&self, source: &Path) -> Result<VideoInfo, String> {
         let output = command(&self.ffprobe)
             .args([
                 "-v",
@@ -76,6 +85,17 @@ impl FfmpegRenderer {
             height: stream.height,
             fps,
         })
+    }
+
+    fn probe_with_ffmpeg(&self, source: &Path) -> Result<VideoInfo, String> {
+        let output = command(&self.ffmpeg)
+            .args(["-hide_banner", "-i"])
+            .arg(source)
+            .args(["-map", "0:v:0", "-frames:v", "1", "-f", "null", "-"])
+            .output()
+            .map_err(|error| format!("无法启动 FFmpeg：{error}"))?;
+        let details = String::from_utf8_lossy(&output.stderr);
+        parse_ffmpeg_video_info(&details)
     }
 }
 
@@ -169,6 +189,30 @@ fn parse_frame_rate(value: &str) -> Result<f64, String> {
     Ok(numerator / denominator)
 }
 
+fn parse_ffmpeg_video_info(details: &str) -> Result<VideoInfo, String> {
+    for line in details.lines().filter(|line| line.contains("Video:")) {
+        let tokens = line
+            .split(|character: char| character.is_whitespace() || character == ',')
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>();
+        let dimensions = tokens.iter().find_map(|token| {
+            let (width, height) = token.split_once('x')?;
+            let width = width.parse::<u32>().ok()?;
+            let height = height.parse::<u32>().ok()?;
+            (width > 0 && height > 0).then_some((width, height))
+        });
+        let fps = tokens.windows(2).find_map(|pair| {
+            (pair[1] == "fps").then(|| pair[0].parse::<f64>().ok()).flatten()
+        });
+        if let (Some((width, height)), Some(fps)) = (dimensions, fps)
+            && fps > 0.0
+        {
+            return Ok(VideoInfo { width, height, fps });
+        }
+    }
+    Err("FFmpeg 输出中没有有效的视频尺寸或帧率".to_string())
+}
+
 fn build_zoompan_filter(timeline: &CameraTimeline, info: VideoInfo) -> String {
     let zoom = piecewise_expression(&timeline.segments, info.fps, |segment| {
         (segment.from.zoom, segment.to.zoom)
@@ -243,6 +287,14 @@ mod tests {
     #[test]
     fn parses_fractional_frame_rate() {
         assert!((parse_frame_rate("60000/1001").unwrap() - 59.940_059).abs() < 0.001);
+    }
+
+    #[test]
+    fn parses_video_info_from_ffmpeg_output() {
+        let details = "Stream #0:0: Video: h264, yuv420p, 3840x2160, 60 fps, 60 tbr";
+        let info = parse_ffmpeg_video_info(details).unwrap();
+        assert_eq!((info.width, info.height), (3840, 2160));
+        assert_eq!(info.fps, 60.0);
     }
 
     #[test]
