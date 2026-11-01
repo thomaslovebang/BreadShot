@@ -30,12 +30,15 @@ type ProcessingProgress = {
   message: string;
 };
 
+type AudioDevice = { id: string; name: string; isDefault: boolean };
+type AudioCapabilities = { systemAudioAvailable: boolean; microphones: AudioDevice[] };
+
 type AppPage = "record" | "settings" | "language" | "update";
 type AppLanguage = "system" | "zh" | "en" | "ja" | "fr" | "de" | "es" | "ar";
 type ResolvedLanguage = Exclude<AppLanguage, "system">;
 
 const DEFAULT_SHORTCUT = "F8";
-const APP_VERSION = "0.2.1";
+const APP_VERSION = "0.3.0";
 const SINGLE_KEY_PATTERN = /^(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4]))$/;
 const initialStatus: RecorderStatus = { isRecording: false, ffmpegAvailable: false, outputPath: null, outputDirectory: "", finalVideoPath: null };
 
@@ -47,6 +50,16 @@ const translations = {
   de: { record: "Aufnehmen", settings: "Aufnahmeeinstellungen", language: "Sprache", update: "Updates", ready: "Bereit", recording: "Aufnahme läuft", working: "Verarbeitung", eyebrow: "Automatische Kameraaufnahme", idleTitle: "Aufnahme starten,", idleAccent: "FocusFlow führt die Kamera.", liveTitle: "Aufnahme läuft,", liveAccent: "konzentriere dich auf die Demo.", subtitle: "Nimm deine Aktionen auf und erzeuge automatisch sanfte Zooms und Kamerafahrten.", start: "Aufnahme starten", stop: "Aufnahme beenden", wait: "Bitte warten…", shortcutHint: "Jederzeit starten oder beenden", detecting: "Bildschirme werden erkannt", unlimited: "Unbegrenzte Dauer", watermark: "MP4 ohne Wasserzeichen", autoZoom: "Automatischer Zoom", finalReady: "Dein Video ist fertig", openFolder: "Ordner öffnen", playFinal: "Finales Video abspielen", playSource: "Originalvideo abspielen", settingsLead: "Verwalte Speicherort, Aufnahmebildschirm und globales Tastenkürzel.", saveLocation: "Speicherort", choose: "Auswählen", display: "Aufnahmebildschirm", displayHelp: "Nur den ausgewählten Bildschirm aufnehmen", shortcut: "Globales Tastenkürzel", shortcutHelp: "Dieselbe Taste startet und beendet", change: "Ändern", privacy: "Private lokale Verarbeitung", privacyHelp: "Bild- und Mausdaten verlassen dieses Gerät nicht", languageLead: "Wähle die Sprache der FocusFlow-Oberfläche.", followSystem: "Systemsprache", current: "Aktuell", updateLead: "Zeigt die installierte Version. Online-Updates folgen später.", currentVersion: "Aktuelle Version", latestLocal: "Auf diesem Computer installiert", updateSoon: "Automatische Updates folgen in Kürze", processingLocal: "Lokale Verarbeitung. FocusFlow bitte geöffnet lassen.", failed: "Das finale Video konnte nicht erstellt werden", savedFiles: "Gespeicherte Dateien anzeigen" },
   es: { record: "Grabar", settings: "Ajustes de grabación", language: "Idioma", update: "Actualizaciones", ready: "Listo", recording: "Grabando", working: "Procesando", eyebrow: "Grabador con cámara automática", idleTitle: "Pulsa grabar,", idleAccent: "FocusFlow dirige la cámara.", liveTitle: "Grabando ahora,", liveAccent: "concéntrate en tu demostración.", subtitle: "Graba tus acciones y crea automáticamente zooms y movimientos suaves.", start: "Iniciar grabación", stop: "Detener grabación", wait: "Espera…", shortcutHint: "Inicia o detén en cualquier momento", detecting: "Detectando pantallas", unlimited: "Duración ilimitada", watermark: "MP4 sin marca de agua", autoZoom: "Zoom automático", finalReady: "Tu vídeo está listo", openFolder: "Abrir carpeta", playFinal: "Reproducir vídeo final", playSource: "Reproducir vídeo original", settingsLead: "Gestiona la carpeta, la pantalla y el atajo global.", saveLocation: "Ubicación", choose: "Elegir", display: "Pantalla de grabación", displayHelp: "Captura solo la pantalla seleccionada", shortcut: "Atajo global", shortcutHelp: "La misma tecla inicia y detiene", change: "Cambiar", privacy: "Procesamiento local privado", privacyHelp: "Los datos nunca salen de este dispositivo", languageLead: "Elige el idioma de la interfaz de FocusFlow.", followSystem: "Seguir el sistema", current: "Actual", updateLead: "Consulta la versión instalada. Las actualizaciones en línea llegarán después.", currentVersion: "Versión actual", latestLocal: "Instalada en este equipo", updateSoon: "Las actualizaciones automáticas llegarán pronto", processingLocal: "Procesando localmente. Mantén FocusFlow abierto.", failed: "No se pudo crear el vídeo final", savedFiles: "Ver archivos guardados" },
   ar: { record: "تسجيل", settings: "إعدادات التسجيل", language: "اللغة", update: "التحديثات", ready: "جاهز", recording: "جارٍ التسجيل", working: "جارٍ المعالجة", eyebrow: "مسجل بكاميرا تلقائية", idleTitle: "اضغط على التسجيل،", idleAccent: "ودع FocusFlow يدير الكاميرا.", liveTitle: "التسجيل جارٍ،", liveAccent: "ركز على العرض فقط.", subtitle: "سجل خطواتك وأنشئ تلقائيًا تكبيرًا وحركة كاميرا سلسة.", start: "بدء التسجيل", stop: "إيقاف التسجيل", wait: "يرجى الانتظار…", shortcutHint: "ابدأ أو أوقف في أي وقت", detecting: "جارٍ اكتشاف الشاشات", unlimited: "مدة غير محدودة", watermark: "MP4 بلا علامة مائية", autoZoom: "تكبير تلقائي", finalReady: "الفيديو جاهز", openFolder: "فتح المجلد", playFinal: "تشغيل الفيديو النهائي", playSource: "تشغيل الفيديو الأصلي", settingsLead: "إدارة مجلد الحفظ والشاشة المسجلة واختصار لوحة المفاتيح.", saveLocation: "موقع الحفظ", choose: "اختيار", display: "شاشة التسجيل", displayHelp: "التقاط الشاشة المحددة فقط", shortcut: "اختصار عام", shortcutHelp: "المفتاح نفسه للبدء والإيقاف", change: "تغيير", privacy: "معالجة محلية خاصة", privacyHelp: "بيانات الشاشة والفأرة لا تغادر جهازك", languageLead: "اختر لغة واجهة FocusFlow.", followSystem: "اتباع لغة النظام", current: "الحالي", updateLead: "عرض الإصدار المثبت. ستتوفر التحديثات عبر الإنترنت لاحقًا.", currentVersion: "الإصدار الحالي", latestLocal: "مثبت على هذا الجهاز", updateSoon: "التحديثات التلقائية قادمة قريبًا", processingLocal: "تتم المعالجة محليًا. أبقِ FocusFlow مفتوحًا.", failed: "تعذر إنشاء الفيديو النهائي", savedFiles: "عرض الملفات المحفوظة" },
+} as const;
+
+const audioTranslations = {
+  zh: { audio: "声音", system: "系统声音", systemHelp: "录制电脑正在播放的声音", microphone: "麦克风", microphoneHelp: "录制旁白并与系统声音混合", unavailable: "不可用", noMicrophone: "未检测到麦克风", on: "开启", off: "关闭", defaultDevice: "默认设备" },
+  en: { audio: "Audio", system: "System audio", systemHelp: "Capture sound playing on this computer", microphone: "Microphone", microphoneHelp: "Record narration and mix it with system audio", unavailable: "Unavailable", noMicrophone: "No microphone detected", on: "On", off: "Off", defaultDevice: "Default device" },
+  ja: { audio: "音声", system: "システム音声", systemHelp: "PCで再生される音声を録音", microphone: "マイク", microphoneHelp: "ナレーションを録音してシステム音声とミックス", unavailable: "利用不可", noMicrophone: "マイクが見つかりません", on: "オン", off: "オフ", defaultDevice: "既定のデバイス" },
+  fr: { audio: "Audio", system: "Audio système", systemHelp: "Capturer le son lu sur cet ordinateur", microphone: "Microphone", microphoneHelp: "Enregistrer la narration et la mixer avec le son système", unavailable: "Indisponible", noMicrophone: "Aucun microphone détecté", on: "Activé", off: "Désactivé", defaultDevice: "Périphérique par défaut" },
+  de: { audio: "Audio", system: "Systemaudio", systemHelp: "Ton aufnehmen, der auf diesem Computer wiedergegeben wird", microphone: "Mikrofon", microphoneHelp: "Kommentar aufnehmen und mit Systemaudio mischen", unavailable: "Nicht verfügbar", noMicrophone: "Kein Mikrofon erkannt", on: "Ein", off: "Aus", defaultDevice: "Standardgerät" },
+  es: { audio: "Audio", system: "Audio del sistema", systemHelp: "Captura el sonido reproducido en este equipo", microphone: "Micrófono", microphoneHelp: "Graba narración y mézclala con el audio del sistema", unavailable: "No disponible", noMicrophone: "No se detectó ningún micrófono", on: "Activado", off: "Desactivado", defaultDevice: "Dispositivo predeterminado" },
+  ar: { audio: "الصوت", system: "صوت النظام", systemHelp: "تسجيل الصوت الذي يشغله الكمبيوتر", microphone: "الميكروفون", microphoneHelp: "تسجيل التعليق ودمجه مع صوت النظام", unavailable: "غير متاح", noMicrophone: "لم يتم اكتشاف ميكروفون", on: "تشغيل", off: "إيقاف", defaultDevice: "الجهاز الافتراضي" },
 } as const;
 
 function systemLanguage(): ResolvedLanguage {
@@ -114,6 +127,10 @@ function App() {
   const [capturedShortcut, setCapturedShortcut] = useState<string | null>(null);
   const [processing, setProcessing] = useState<ProcessingProgress | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [audioCapabilities, setAudioCapabilities] = useState<AudioCapabilities>({ systemAudioAvailable: false, microphones: [] });
+  const [systemAudio, setSystemAudio] = useState(localStorage.getItem("focusflow.systemAudio") !== "false");
+  const [microphone, setMicrophone] = useState(localStorage.getItem("focusflow.microphone") === "true");
+  const [microphoneDeviceId, setMicrophoneDeviceId] = useState(localStorage.getItem("focusflow.microphoneDevice") || "");
   const statusRef = useRef(status);
   const busyRef = useRef(busy);
   const shortcutRef = useRef(shortcut);
@@ -122,6 +139,7 @@ function App() {
   const shortcutQueueRef = useRef<Promise<void>>(Promise.resolve());
   const resolvedLanguage = language === "system" ? systemLanguage() : language;
   const t = translations[resolvedLanguage];
+  const audioText = audioTranslations[resolvedLanguage];
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { busyRef.current = busy; }, [busy]);
@@ -162,6 +180,16 @@ function App() {
         const initialDisplay = monitorList.find((monitor) => monitor.id === savedDisplayId) || monitorList[0];
         setDisplays(monitorList);
         setSelectedDisplayId(initialDisplay.id);
+
+        const audio = await invoke<AudioCapabilities>("list_audio_devices").catch(() => ({ systemAudioAvailable: false, microphones: [] }));
+        setAudioCapabilities(audio);
+        const savedMicrophone = localStorage.getItem("focusflow.microphoneDevice");
+        const selectedMicrophone = audio.microphones.find((device) => device.id === savedMicrophone)
+          || audio.microphones.find((device) => device.isDefault)
+          || audio.microphones[0];
+        if (selectedMicrophone) setMicrophoneDeviceId(selectedMicrophone.id);
+        if (!audio.systemAudioAvailable) setSystemAudio(false);
+        if (audio.microphones.length === 0) setMicrophone(false);
 
         let next = await invoke<RecorderStatus>("recorder_status");
         const savedDirectory = localStorage.getItem("focusflow.outputDirectory");
@@ -276,6 +304,11 @@ function App() {
             y: selectedDisplay.y,
             width: selectedDisplay.width,
             height: selectedDisplay.height,
+          },
+          audioOptions: {
+            systemAudio: systemAudio && audioCapabilities.systemAudioAvailable,
+            microphone: microphone && audioCapabilities.microphones.length > 0,
+            microphoneDeviceId: microphoneDeviceId || null,
           },
         });
       }
@@ -395,6 +428,7 @@ function App() {
                   </div>
                   <div className="capture-foot"><span><kbd>{shortcut}</kbd> {t.shortcutHint}</span><span>{selectedDisplay ? selectedDisplay.label : t.detecting}</span></div>
                 </div>
+                <div className="audio-status-row"><span className={systemAudio ? "enabled" : ""}>◉ {audioText.system} · {systemAudio ? audioText.on : audioText.off}</span><span className={microphone ? "enabled" : ""}>⌁ {audioText.microphone} · {microphone ? audioText.on : audioText.off}</span></div>
                 <div className="outcome-slot">
                   {busy && processing && <section className="processing-card" aria-live="polite"><div className="processing-copy"><span className="spinner" /><div><strong>{processing.message}</strong><span>{t.processingLocal}</span></div><b>{processing.progress}%</b></div><div className="progress-track"><i style={{ width: `${processing.progress}%` }} /></div></section>}
                   {!busy && failure && <section className="failure-card" role="alert"><div><strong>{t.failed}</strong><span>{failure}</span></div><button type="button" className="secondary-button" onClick={() => void revealOutput()}>{t.savedFiles}</button></section>}
@@ -411,6 +445,8 @@ function App() {
                   <div className="setting-row"><span className="setting-index">01</span><div className="setting-copy"><strong>{t.saveLocation}</strong><span title={status.outputDirectory}>{status.outputDirectory || "—"}</span></div><button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => void chooseOutputDirectory()}>{t.choose}</button></div>
                   <div className="setting-row"><span className="setting-index">02</span><div className="setting-copy"><strong>{t.display}</strong><span>{t.displayHelp}</span></div><select className="display-select" value={selectedDisplayId} disabled={status.isRecording || busy} onChange={(event) => changeDisplay(event.target.value)}>{displays.map((display) => <option key={display.id} value={display.id}>{display.label}</option>)}</select></div>
                   <div className="setting-row"><span className="setting-index">03</span><div className="setting-copy"><strong>{t.shortcut}</strong><span>{t.shortcutHelp}</span></div><div className="shortcut-control"><kbd>{shortcut}</kbd><button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => { setCapturedShortcut(null); setShortcutDialogOpen(true); }}>{t.change}</button></div></div>
+                  <div className="setting-row"><span className="setting-index">04</span><div className="setting-copy"><strong>{audioText.system}</strong><span>{audioCapabilities.systemAudioAvailable ? audioText.systemHelp : audioText.unavailable}</span></div><button type="button" role="switch" aria-checked={systemAudio} className={`toggle-switch ${systemAudio ? "active" : ""}`} disabled={!audioCapabilities.systemAudioAvailable || status.isRecording || busy} onClick={() => { const next = !systemAudio; setSystemAudio(next); localStorage.setItem("focusflow.systemAudio", String(next)); }}><i /></button></div>
+                  <div className="setting-row"><span className="setting-index">05</span><div className="setting-copy"><strong>{audioText.microphone}</strong><span>{audioCapabilities.microphones.length > 0 ? audioText.microphoneHelp : audioText.noMicrophone}</span></div><div className="audio-control"><select className="display-select microphone-select" value={microphoneDeviceId} disabled={!microphone || status.isRecording || busy || audioCapabilities.microphones.length === 0} onChange={(event) => { setMicrophoneDeviceId(event.target.value); localStorage.setItem("focusflow.microphoneDevice", event.target.value); }}>{audioCapabilities.microphones.map((device) => <option key={device.id} value={device.id}>{device.name}{device.isDefault ? ` · ${audioText.defaultDevice}` : ""}</option>)}</select><button type="button" role="switch" aria-checked={microphone} className={`toggle-switch ${microphone ? "active" : ""}`} disabled={audioCapabilities.microphones.length === 0 || status.isRecording || busy} onClick={() => { const next = !microphone; setMicrophone(next); localStorage.setItem("focusflow.microphone", String(next)); }}><i /></button></div></div>
                   <div className="privacy-note"><span>⌾</span><div><strong>{t.privacy}</strong><small>{t.privacyHelp}</small></div></div>
                 </div>
               </section>

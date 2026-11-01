@@ -10,6 +10,8 @@ The current product has one workflow: choose a display, save folder, and start/s
 
 FocusFlow 0.2 introduces a recording-first workspace with a compact left navigation rail. The recording canvas owns the main area, while dedicated pages provide recording settings, interface language, and installed-version information. The active navigation item is visibly enlarged with a blue focus border.
 
+FocusFlow 0.3 adds native Windows audio capture. System playback is captured through WASAPI loopback, an optional selected microphone can be recorded at the same time, and both tracks are synchronized, mixed, limited, and encoded into the original and automatically directed MP4 files.
+
 ![FocusFlow Alpha recording interface](docs/assets/focusflow-alpha.png)
 
 ## Download
@@ -63,6 +65,9 @@ cargo check --workspace
 - Interface language choices for Follow System, Chinese, English, Japanese, French, German, Spanish, and Arabic.
 - Arabic automatically uses a right-to-left interface direction.
 - The default `F8` global shortcut works immediately on first launch without being saved again.
+- Native system-audio capture through Windows WASAPI loopback.
+- Optional microphone capture with device selection.
+- Synchronized system-audio and microphone mixing with AAC output in both saved MP4 files.
 - Recoverable error feedback that keeps the saved source recording accessible.
 
 Manual timelines, project opening, clip editing, camera keyframes, and director-style settings are outside the current product.
@@ -70,7 +75,7 @@ Manual timelines, project opening, clip editing, camera keyframes, and director-
 ## Alpha limitations
 
 - Windows only.
-- System audio and microphone recording are not included yet.
+- Audio capture depends on an active Windows audio endpoint; exclusive-mode applications may prevent loopback capture.
 - The automatic camera is intentionally zero-edit in this version.
 - The installer is not code-signed yet.
 

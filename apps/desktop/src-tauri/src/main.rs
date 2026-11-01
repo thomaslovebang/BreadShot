@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio_capture;
+
 use focusflow_domain::CameraTimeline;
 use focusflow_editor_core::{
     CameraKeyframe, Timeline as EditorTimeline, VideoClip, timeline_from_keyframes,
@@ -12,6 +14,7 @@ use focusflow_project_store::{
     save_project,
 };
 use focusflow_renderer::{FfmpegRenderer, Renderer};
+use audio_capture::{AudioCaptureHandle, AudioDeviceInfo};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -48,6 +51,9 @@ struct ActiveRecording {
     ffprobe_path: PathBuf,
     director_profile: DirectorProfile,
     mouse_tracker: Option<MouseTrackerHandle>,
+    audio_captures: Vec<AudioCaptureHandle>,
+    audio_cache_paths: Vec<PathBuf>,
+    audio_lead_seconds: Vec<f64>,
 }
 
 struct RecorderState {
@@ -115,6 +121,33 @@ struct CaptureArea {
     y: i32,
     width: i32,
     height: i32,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioOptions {
+    system_audio: bool,
+    microphone: bool,
+    microphone_device_id: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioCapabilities {
+    system_audio_available: bool,
+    microphones: Vec<AudioDeviceInfo>,
+}
+
+#[tauri::command]
+async fn list_audio_devices() -> Result<AudioCapabilities, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        Ok(AudioCapabilities {
+            system_audio_available: audio_capture::system_audio_available()?,
+            microphones: audio_capture::list_microphones()?,
+        })
+    })
+    .await
+    .map_err(|error| format!("检测音频设备失败：{error}"))?
 }
 
 #[derive(Serialize)]
@@ -826,6 +859,7 @@ fn camera_source_indices(original: &CameraTimeline, clips: &[VideoClipEdit]) -> 
 #[tauri::command]
 fn start_recording(
     capture_area: CaptureArea,
+    audio_options: AudioOptions,
     app: tauri::AppHandle,
     state: State<'_, RecorderState>,
 ) -> Result<RecorderStatus, String> {
@@ -901,7 +935,41 @@ fn start_recording(
     };
     save_edit_timeline(&edit_timeline_path, &EditTimeline::default())?;
     save_project(&project_path, &project)?;
+    let system_audio_path = output_path.with_extension("system.f32");
+    let microphone_path = output_path.with_extension("microphone.f32");
+    let mut audio_captures = Vec::new();
+    if audio_options.system_audio {
+        audio_captures.push(audio_capture::start_system_audio(system_audio_path.clone())?);
+    }
+    if audio_options.microphone {
+        match audio_capture::start_microphone(
+            microphone_path.clone(),
+            audio_options.microphone_device_id.clone(),
+        ) {
+            Ok(capture) => audio_captures.push(capture),
+            Err(error) => {
+                for capture in audio_captures {
+                    let _ = capture.stop();
+                }
+                let _ = fs::remove_file(&system_audio_path);
+                return Err(error);
+            }
+        }
+    }
     let recording_origin = Instant::now();
+    let audio_lead_seconds = audio_captures
+        .iter()
+        .map(|capture| {
+            recording_origin
+                .checked_duration_since(capture.started_at)
+                .unwrap_or_default()
+                .as_secs_f64()
+        })
+        .collect::<Vec<_>>();
+    let audio_cache_paths = audio_captures
+        .iter()
+        .map(|capture| capture.path.clone())
+        .collect::<Vec<_>>();
     let log_path = output_path.with_extension("log");
     let log = File::create(&log_path).map_err(|error| format!("无法创建录制日志：{error}"))?;
     let log_copy = log
@@ -933,7 +1001,15 @@ fn start_recording(
         .stdout(Stdio::from(log_copy))
         .stderr(Stdio::from(log))
         .spawn();
-    let process = process_result.map_err(|error| format!("无法启动屏幕录制：{error}"))?;
+    let process = match process_result {
+        Ok(process) => process,
+        Err(error) => {
+            for capture in audio_captures {
+                let _ = capture.stop();
+            }
+            return Err(format!("无法启动屏幕录制：{error}"));
+        }
+    };
     let mouse_tracker = match MouseTrackerHandle::start(
         &mouse_events_path,
         recording_origin,
@@ -946,6 +1022,9 @@ fn start_recording(
                 let _ = stdin.write_all(b"q\n");
             }
             let _ = process.wait();
+            for capture in audio_captures {
+                let _ = capture.stop();
+            }
             return Err(error);
         }
     };
@@ -962,6 +1041,9 @@ fn start_recording(
         ffprobe_path: ffprobe,
         director_profile,
         mouse_tracker: Some(mouse_tracker),
+        audio_captures,
+        audio_cache_paths,
+        audio_lead_seconds,
     });
     *state
         .last_source_video
@@ -1005,7 +1087,7 @@ fn stop_active_recording(
 }
 
 fn remove_processing_artifacts(recording: &ActiveRecording) -> Result<(), String> {
-    let artifacts = [
+    let mut artifacts = vec![
         recording.mouse_events_path.clone(),
         recording.camera_timeline_path.clone(),
         recording.output_path.with_extension("edit.json"),
@@ -1013,7 +1095,9 @@ fn remove_processing_artifacts(recording: &ActiveRecording) -> Result<(), String
         recording.output_path.with_extension("log"),
         recording.final_video_path.with_extension("filter.txt"),
         recording.final_video_path.with_extension("render.log"),
+        recording.output_path.with_extension("audio.mp4"),
     ];
+    artifacts.extend(recording.audio_cache_paths.iter().cloned());
 
     for path in artifacts {
         if path.exists() {
@@ -1052,6 +1136,10 @@ fn stop_and_render(
         ));
     }
     tracker_result?;
+    for capture in recording.audio_captures.drain(..) {
+        capture.stop()?;
+    }
+    mux_recorded_audio(recording)?;
     emit_processing_progress(app, "analyzing", 42, "正在分析鼠标动作…");
     let timeline = generate_camera_timeline(recording)?;
     recording.project.duration_ms = Some(timeline.duration_ms);
@@ -1063,6 +1151,56 @@ fn stop_and_render(
         &timeline,
         &recording.final_video_path,
     )?;
+    Ok(())
+}
+
+fn mux_recorded_audio(recording: &ActiveRecording) -> Result<(), String> {
+    if recording.audio_cache_paths.is_empty() {
+        return Ok(());
+    }
+    let muxed_path = recording.output_path.with_extension("audio.mp4");
+    let mut process = command(&recording.ffmpeg_path);
+    process.args(["-hide_banner", "-y", "-i"]).arg(&recording.output_path);
+    for path in &recording.audio_cache_paths {
+        process
+            .args(["-f", "f32le", "-ar", "44100", "-ac", "2", "-i"])
+            .arg(path);
+    }
+
+    let mut prepared = Vec::new();
+    let mut filters = Vec::new();
+    for (index, lead) in recording.audio_lead_seconds.iter().enumerate() {
+        let label = format!("a{}", index + 1);
+        filters.push(format!(
+            "[{}:a]atrim=start={lead:.6},asetpts=PTS-STARTPTS[{label}]",
+            index + 1
+        ));
+        prepared.push(format!("[{label}]"));
+    }
+    if prepared.len() == 1 {
+        filters.push(format!("{}aresample=async=1:first_pts=0,apad[aout]", prepared[0]));
+    } else {
+        filters.push(format!(
+            "{}amix=inputs={}:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95,aresample=async=1:first_pts=0,apad[aout]",
+            prepared.join(""),
+            prepared.len()
+        ));
+    }
+    let filter = filters.join(";");
+    let status = process
+        .args(["-filter_complex", &filter, "-map", "0:v:0", "-map", "[aout]"])
+        .args(["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart"])
+        .arg(&muxed_path)
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|error| format!("无法启动音视频合并：{error}"))?;
+    if !status.success() {
+        return Err("系统声音或麦克风与视频合并失败".to_string());
+    }
+    fs::remove_file(&recording.output_path)
+        .map_err(|error| format!("无法替换原始视频：{error}"))?;
+    fs::rename(&muxed_path, &recording.output_path)
+        .map_err(|error| format!("无法保存带声音的原始视频：{error}"))?;
     Ok(())
 }
 
@@ -1212,6 +1350,7 @@ fn main() {
             reset_camera_edits,
             start_recording,
             stop_recording,
+            list_audio_devices,
             open_final_video,
             open_source_video,
             reveal_output
