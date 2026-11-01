@@ -60,7 +60,8 @@ cargo check --workspace
 - A responsive interface that fills the available window when maximized.
 - A branded FocusFlow icon for the app window, executable, and installer.
 - A left navigation rail with dedicated Recording Settings, Language, and Updates pages.
-- Interface language choices for Follow System, Chinese, English, Japanese, and French.
+- Interface language choices for Follow System, Chinese, English, Japanese, French, German, Spanish, and Arabic.
+- Arabic automatically uses a right-to-left interface direction.
 - The default `F8` global shortcut works immediately on first launch without being saved again.
 - Recoverable error feedback that keeps the saved source recording accessible.
 
