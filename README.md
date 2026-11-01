@@ -1,15 +1,36 @@
 # FocusFlow
 
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-5b76f7?logo=windows)](https://github.com/thomaslovebang/FocusFlow9/releases/latest)
+[![Release](https://img.shields.io/github/v/release/thomaslovebang/FocusFlow9?include_prereleases)](https://github.com/thomaslovebang/FocusFlow9/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-8b94a6)](LICENSE)
+
 FocusFlow is a focused Windows screen recorder. It records the screen and mouse locally, turns mouse actions into automatic zoom and pan, and exports a watermark-free MP4.
 
 The current product has one workflow: choose a display, save folder, and start/stop shortcut; record for as long as needed; then follow the local processing stages and play the automatically directed video.
 
-## Run the desktop app
+![FocusFlow Alpha recording interface](docs/assets/focusflow-alpha.png)
+
+## Download
+
+Download the latest Windows installer from [GitHub Releases](https://github.com/thomaslovebang/FocusFlow9/releases/latest). The installer includes the video engine; users do not need to install FFmpeg, Node.js, or Rust.
+
+FocusFlow Alpha supports 64-bit Windows 10 and Windows 11. The first public version is unsigned, so Windows SmartScreen may ask for confirmation before installation.
+
+## Quick start
+
+1. Install and open FocusFlow.
+2. Choose one display and a save folder.
+3. Keep the default `F8` shortcut or choose another single key.
+4. Start recording, complete the demonstration, then press the shortcut again.
+5. Wait for local mouse analysis and automatic camera rendering, then play the finished MP4.
+
+## Build from source
 
 From `apps/desktop` on Windows:
 
 ```powershell
 npm install
+npm run prepare:ffmpeg
 npm run tauri dev
 ```
 
@@ -19,7 +40,7 @@ Check the Rust workspace from the repository root:
 cargo check --workspace
 ```
 
-FFmpeg has to be available as `ffmpeg.exe` beside the app, under `apps/desktop/src-tauri/bin`, in WinGet (`Gyan.FFmpeg.Essentials`), or on `PATH`. `ffprobe` is resolved next to that FFmpeg binary.
+`npm run prepare:ffmpeg` downloads the pinned FFmpeg 9.0.2 Essentials package, verifies its SHA-256 checksum, and prepares only `ffmpeg.exe`, `ffprobe.exe`, and the legal files used by the bundle. Run `npm run bundle` to produce the Windows NSIS installer.
 
 ## Current product scope
 
@@ -34,6 +55,15 @@ FFmpeg has to be available as `ffmpeg.exe` beside the app, under `apps/desktop/s
 - Recoverable error feedback that keeps the saved source recording accessible.
 
 Manual timelines, project opening, clip editing, camera keyframes, and director-style settings are outside the current product.
+
+## Alpha limitations
+
+- Windows only.
+- System audio and microphone recording are not included yet.
+- The automatic camera is intentionally zero-edit in this version.
+- The installer is not code-signed yet.
+
+Please report reproducible problems through the [Bug report form](https://github.com/thomaslovebang/FocusFlow9/issues/new?template=bug_report.yml).
 
 ## Workspace
 
@@ -52,6 +82,8 @@ Manual timelines, project opening, clip editing, camera keyframes, and director-
 ## Scope
 
 V1 is Windows-only. Processing stays on the machine: no cloud services, accounts, or watermark.
+
+FocusFlow is MIT licensed. Release installers also bundle separate FFmpeg executables under GPLv3; see [third-party notices](THIRD_PARTY_NOTICES.md).
 
 Older phase write-ups under `docs/` are historical test and design notes.
 

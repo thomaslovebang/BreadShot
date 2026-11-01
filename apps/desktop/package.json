@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "prepare:ffmpeg": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/prepare-ffmpeg.ps1",
+    "bundle": "npm run prepare:ffmpeg && tauri build",
     "tauri": "tauri"
   },
   "dependencies": {

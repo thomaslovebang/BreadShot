@@ -1,6 +1,8 @@
 /target/
 **/node_modules/
 **/dist/
+/apps/desktop/src-tauri/bin/
+/apps/desktop/src-tauri/legal/
 /work/
 *.mp4
 *.jsonl

@@ -1,0 +1,60 @@
+name: Bug 报告
+description: 录制、自动运镜、导出或安装出现问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: 感谢帮助 FocusFlow 变得更稳定。请勿上传包含隐私信息的录屏文件。
+  - type: input
+    id: version
+    attributes:
+      label: FocusFlow 版本
+      placeholder: 例如 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 版本
+      placeholder: 例如 Windows 11 24H2
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: 问题发生在哪一步？
+      options:
+        - 安装或启动
+        - 开始录制
+        - 结束录制
+        - 自动运镜处理
+        - 播放或打开文件夹
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 如何复现？
+      description: 请按顺序写出操作和实际结果。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 你期望发生什么？
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 可提供显示器数量、分辨率、错误提示或脱敏截图。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我已确认附件不包含密码、个人信息或其他敏感内容。
+          required: true
