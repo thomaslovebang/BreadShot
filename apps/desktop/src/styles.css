@@ -23,7 +23,8 @@ button:focus-visible, select:focus-visible { outline: 2px solid #a5b4fc; outline
 }
 
 .app-frame {
-  width: min(1160px, 100%);
+  width: 100%;
+  height: calc(100vh - 36px);
   min-height: min(720px, calc(100vh - 36px));
   display: grid;
   grid-template-rows: 72px 1fr 48px;
@@ -129,9 +130,10 @@ button:focus-visible, select:focus-visible { outline: 2px solid #a5b4fc; outline
 .spinner { width: 15px; height: 15px; flex: none; border: 2px solid rgb(128 150 255 / 20%); border-top-color: #8096ff; border-radius: 50%; animation: spin .8s linear infinite; }
 .progress-track { height: 3px; margin-top: 12px; overflow: hidden; border-radius: 99px; background: #202633; }
 .progress-track i { height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg, #637cff, #9b74ff); transition: width .35s ease; }
-.success-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 11px 12px; border-color: rgb(87 213 153 / 19%); background: rgb(64 165 115 / 6%); }
+.success-card { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; padding: 11px 12px; border-color: rgb(87 213 153 / 19%); background: rgb(64 165 115 / 6%); }
 .success-icon { width: 30px; height: 30px; display: grid; place-items: center; color: #07100c; border-radius: 9px; background: #61d59b; box-shadow: 0 8px 20px rgb(72 205 139 / 16%); font-size: 13px; font-weight: 800; }
-.result-actions { display: flex; gap: 6px; }
+.result-actions { grid-column: 1 / -1; display: flex; gap: 6px; }
+.result-actions > button { flex: 1; white-space: nowrap; }
 .result-actions .primary-button.compact { min-width: 92px; padding: 9px 11px; font-size: 9px; }
 .failure-card { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 13px 14px; border-color: rgb(255 88 104 / 20%); background: rgb(255 88 104 / 5%); }
 .failure-card span { max-width: 340px; color: #9a7580; }
@@ -177,7 +179,7 @@ footer i { width: 2px; height: 2px; border-radius: 50%; background: #454d5c; }
 @media (max-width: 900px) {
   body { overflow: auto; }
   .shell { padding: 10px; }
-  .app-frame { min-height: calc(100vh - 20px); }
+  .app-frame { height: auto; min-height: calc(100vh - 20px); }
   .workspace { grid-template-columns: 1fr; }
   .hero { min-height: 540px; }
   .settings { width: 100%; }

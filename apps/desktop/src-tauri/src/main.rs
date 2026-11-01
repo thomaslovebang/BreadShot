@@ -999,7 +999,28 @@ fn stop_active_recording(
     }
     recording.project.state = ProjectState::Ready;
     save_project(&recording.project_path, &recording.project)?;
+    remove_processing_artifacts(recording)?;
     emit_processing_progress(app, "complete", 100, "自动运镜视频已生成");
+    Ok(())
+}
+
+fn remove_processing_artifacts(recording: &ActiveRecording) -> Result<(), String> {
+    let artifacts = [
+        recording.mouse_events_path.clone(),
+        recording.camera_timeline_path.clone(),
+        recording.output_path.with_extension("edit.json"),
+        recording.project_path.clone(),
+        recording.output_path.with_extension("log"),
+        recording.final_video_path.with_extension("filter.txt"),
+        recording.final_video_path.with_extension("render.log"),
+    ];
+
+    for path in artifacts {
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|error| format!("无法清理处理文件 {}：{error}", path.display()))?;
+        }
+    }
     Ok(())
 }
 
@@ -1061,6 +1082,25 @@ fn open_final_video(state: State<'_, RecorderState>) -> Result<(), String> {
         .arg(path)
         .spawn()
         .map_err(|error| format!("无法打开视频：{error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_source_video(state: State<'_, RecorderState>) -> Result<(), String> {
+    let path = state
+        .last_source_video
+        .lock()
+        .map_err(|_| "最近录制状态不可用".to_string())?
+        .clone()
+        .ok_or_else(|| "还没有可以播放的原始视频".to_string())?;
+    if !path.is_file() {
+        return Err("原始视频已被移动或删除".to_string());
+    }
+    command("rundll32.exe")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(path)
+        .spawn()
+        .map_err(|error| format!("无法打开原始视频：{error}"))?;
     Ok(())
 }
 
@@ -1173,6 +1213,7 @@ fn main() {
             start_recording,
             stop_recording,
             open_final_video,
+            open_source_video,
             reveal_output
         ])
         .build(tauri::generate_context!())

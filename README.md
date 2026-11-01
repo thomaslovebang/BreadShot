@@ -6,7 +6,7 @@
 
 FocusFlow is a focused Windows screen recorder. It records the screen and mouse locally, turns mouse actions into automatic zoom and pan, and exports a watermark-free MP4.
 
-The current product has one workflow: choose a display, save folder, and start/stop shortcut; record for as long as needed; then follow the local processing stages and play the automatically directed video.
+The current product has one workflow: choose a display, save folder, and start/stop shortcut; record for as long as needed; then follow the local processing stages and play either the automatically directed video or the untouched source recording.
 
 ![FocusFlow Alpha recording interface](docs/assets/focusflow-alpha.png)
 
@@ -22,7 +22,9 @@ FocusFlow Alpha supports 64-bit Windows 10 and Windows 11. The first public vers
 2. Choose one display and a save folder.
 3. Keep the default `F8` shortcut or choose another single key.
 4. Start recording, complete the demonstration, then press the shortcut again.
-5. Wait for local mouse analysis and automatic camera rendering, then play the finished MP4.
+5. Wait for local mouse analysis and automatic camera rendering, then play the final or original MP4.
+
+After a successful recording, the selected folder contains only two files: the untouched original MP4 and the automatically directed final MP4. Temporary mouse, camera, project, filter, and render-log files are removed automatically.
 
 ## Build from source
 
@@ -51,7 +53,10 @@ cargo check --workspace
 - User-selected output folder.
 - One configurable global shortcut that starts and stops recording.
 - Visible save, mouse-analysis, and automatic-camera rendering stages.
-- A finished-video result with Play Video and Open Folder actions.
+- A finished-video result with Open Folder, Play Final Video, and Play Original Video actions.
+- A clean output folder containing only the original and final MP4 after successful processing.
+- A responsive interface that fills the available window when maximized.
+- A branded FocusFlow icon for the app window, executable, and installer.
 - Recoverable error feedback that keeps the saved source recording accessible.
 
 Manual timelines, project opening, clip editing, camera keyframes, and director-style settings are outside the current product.

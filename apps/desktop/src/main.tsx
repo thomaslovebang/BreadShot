@@ -296,6 +296,14 @@ function App() {
     }
   }
 
+  async function openSourceVideo() {
+    try {
+      await invoke("open_source_video");
+    } catch (error) {
+      setFailure(readableError(error));
+    }
+  }
+
   async function revealOutput() {
     try {
       await invoke("reveal_output");
@@ -349,7 +357,7 @@ function App() {
                 <section className="success-card">
                   <div className="success-icon">✓</div>
                   <div className="success-copy"><strong>成片已准备好</strong><span title={status.finalVideoPath}>{fileName(status.finalVideoPath)}</span></div>
-                  <div className="result-actions"><button type="button" className="primary-button compact" onClick={() => void openFinalVideo()}>▶ 播放视频</button><button type="button" className="secondary-button" onClick={() => void revealOutput()}>打开文件夹</button></div>
+                  <div className="result-actions"><button type="button" className="secondary-button" onClick={() => void revealOutput()}>打开文件夹</button><button type="button" className="primary-button compact" onClick={() => void openFinalVideo()}>▶ 播放最终视频</button><button type="button" className="secondary-button" onClick={() => void openSourceVideo()}>播放原始视频</button></div>
                 </section>
               )}
               {!busy && !failure && !status.finalVideoPath && <div className="promise-row"><span>∞ 不限时长</span><span>◇ 无水印 MP4</span><span>⌁ 自动缩放跟随</span></div>}
