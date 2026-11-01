@@ -9,12 +9,13 @@ use std::{
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
+    sync::OnceLock,
 };
 use windows::Win32::{
     Foundation::POINT,
     UI::{
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON},
-        WindowsAndMessaging::GetCursorPos,
+        WindowsAndMessaging::{CURSORINFO, CURSOR_SHOWING, GetCursorInfo, GetCursorPos, LoadCursorW},
     },
 };
 
@@ -45,6 +46,7 @@ struct TraceEvent {
     speed_px_s: f64,
     click: bool,
     event: &'static str,
+    cursor_role: &'static str,
 }
 
 #[derive(Serialize)]
@@ -244,8 +246,39 @@ fn write_event(
             speed_px_s,
             click,
             event,
+            cursor_role: current_cursor_role(),
         },
     )
+}
+
+fn current_cursor_role() -> &'static str {
+    static HANDLES: OnceLock<Vec<(&'static str, usize)>> = OnceLock::new();
+    let handles = HANDLES.get_or_init(|| {
+        crate::cursor_render::CURSOR_ROLES
+            .iter()
+            .filter_map(|(role, id)| {
+                unsafe {
+                    LoadCursorW(
+                        None,
+                        windows::core::PCWSTR(usize::from(*id) as *const u16),
+                    )
+                }
+                .ok()
+                .map(|cursor| (*role, cursor.0 as usize))
+            })
+            .collect()
+    });
+    let mut info = CURSORINFO {
+        cbSize: std::mem::size_of::<CURSORINFO>() as u32,
+        ..Default::default()
+    };
+    if unsafe { GetCursorInfo(&mut info) }.is_err() || info.flags != CURSOR_SHOWING {
+        return "normal";
+    }
+    handles
+        .iter()
+        .find_map(|(role, handle)| (*handle == info.hCursor.0 as usize).then_some(*role))
+        .unwrap_or("normal")
 }
 
 fn write_json_line<T: Serialize>(writer: &mut BufWriter<File>, value: &T) -> Result<(), String> {

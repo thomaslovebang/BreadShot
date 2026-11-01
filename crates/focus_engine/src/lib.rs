@@ -13,6 +13,11 @@ const FULL_FRAME: CameraPose = CameraPose {
     zoom: 1.0,
 };
 
+const FAST_CLICK_LOOKBACK_MS: u64 = 100;
+const FAST_CLICK_RECENT_MS: u64 = 40;
+const FAST_CLICK_LOOKBACK_DISTANCE: f64 = 0.06;
+const FAST_CLICK_RECENT_DISTANCE: f64 = 0.02;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DirectorProfile {
@@ -190,13 +195,15 @@ impl SmartFocusEngine {
     fn click_cues(&self, events: &[MouseEvent]) -> Vec<Cue> {
         events
             .iter()
-            .filter(|event| {
+            .enumerate()
+            .filter(|(_, event)| {
                 matches!(
                     event.kind,
                     MouseEventKind::LeftClick | MouseEventKind::RightClick
                 )
             })
-            .map(|event| Cue {
+            .filter(|(index, _)| !click_during_fast_movement(events, *index))
+            .map(|(_, event)| Cue {
                 time_ms: event.time_ms,
                 hold_until_ms: event.time_ms.saturating_add(self.config.click_hold_ms),
                 pose: CameraPose {
@@ -423,6 +430,61 @@ impl SmartFocusEngine {
     }
 }
 
+fn click_during_fast_movement(events: &[MouseEvent], click_index: usize) -> bool {
+    let Some(click) = events.get(click_index) else {
+        return false;
+    };
+    let Some(lookback_distance) = movement_distance_before(
+        events,
+        click_index,
+        click.time_ms.saturating_sub(FAST_CLICK_LOOKBACK_MS),
+    ) else {
+        return false;
+    };
+    let Some(recent_distance) = movement_distance_before(
+        events,
+        click_index,
+        click.time_ms.saturating_sub(FAST_CLICK_RECENT_MS),
+    ) else {
+        return false;
+    };
+    lookback_distance >= FAST_CLICK_LOOKBACK_DISTANCE
+        && recent_distance >= FAST_CLICK_RECENT_DISTANCE
+}
+
+fn movement_distance_before(
+    events: &[MouseEvent],
+    click_index: usize,
+    start_ms: u64,
+) -> Option<f64> {
+    let click = events.get(click_index)?;
+    let mut previous = events[..click_index]
+        .iter()
+        .rev()
+        .find(|event| event.kind == MouseEventKind::Move && event.time_ms <= start_ms)
+        .map(|event| event.position);
+    let mut distance_sum = 0.0;
+    let mut samples = 0_u32;
+    for event in &events[..click_index] {
+        if event.time_ms < start_ms || event.kind != MouseEventKind::Move {
+            continue;
+        }
+        if let Some(last) = previous {
+            distance_sum += distance(last, event.position);
+            samples += 1;
+        }
+        previous = Some(event.position);
+    }
+    if let Some(last) = previous {
+        let final_distance = distance(last, click.position);
+        if final_distance > 0.0 {
+            distance_sum += final_distance;
+            samples += 1;
+        }
+    }
+    (samples > 0).then_some(distance_sum)
+}
+
 #[derive(Deserialize)]
 struct TraceLine {
     #[serde(rename = "type")]
@@ -545,6 +607,66 @@ mod tests {
                 .iter()
                 .any(|segment| segment.to.zoom == 1.34)
         );
+    }
+
+    fn has_click_focus(events: &[MouseEvent]) -> bool {
+        SmartFocusEngine::default()
+            .analyze(3_000, events)
+            .unwrap()
+            .segments
+            .iter()
+            .any(|segment| segment.reason == FocusReason::Click && segment.to.zoom > 1.0)
+    }
+
+    #[test]
+    fn fast_moving_left_click_is_ignored() {
+        let events = vec![
+            mouse(880, 0.10, 0.50, 0.0, MouseEventKind::Move),
+            mouse(920, 0.18, 0.50, 0.0, MouseEventKind::Move),
+            mouse(960, 0.27, 0.50, 0.0, MouseEventKind::Move),
+            mouse(990, 0.34, 0.50, 0.0, MouseEventKind::Move),
+            mouse(1_000, 0.36, 0.50, 0.0, MouseEventKind::LeftClick),
+        ];
+        assert!(!has_click_focus(&events));
+    }
+
+    #[test]
+    fn fast_moving_right_click_is_ignored() {
+        let events = vec![
+            mouse(880, 0.10, 0.50, 0.0, MouseEventKind::Move),
+            mouse(920, 0.18, 0.50, 0.0, MouseEventKind::Move),
+            mouse(960, 0.27, 0.50, 0.0, MouseEventKind::Move),
+            mouse(990, 0.34, 0.50, 0.0, MouseEventKind::Move),
+            mouse(1_000, 0.36, 0.50, 0.0, MouseEventKind::RightClick),
+        ];
+        assert!(!has_click_focus(&events));
+    }
+
+    #[test]
+    fn slow_moving_click_is_preserved() {
+        let events = vec![
+            mouse(880, 0.50, 0.50, 0.0, MouseEventKind::Move),
+            mouse(930, 0.505, 0.50, 0.0, MouseEventKind::Move),
+            mouse(980, 0.510, 0.50, 0.0, MouseEventKind::Move),
+            mouse(1_000, 0.512, 0.50, 0.0, MouseEventKind::LeftClick),
+        ];
+        assert!(has_click_focus(&events));
+    }
+
+    #[test]
+    fn click_after_fast_movement_has_stopped_is_preserved() {
+        let events = vec![
+            mouse(700, 0.10, 0.50, 0.0, MouseEventKind::Move),
+            mouse(800, 0.50, 0.50, 0.0, MouseEventKind::Move),
+            mouse(1_000, 0.50, 0.50, 0.0, MouseEventKind::LeftClick),
+        ];
+        assert!(has_click_focus(&events));
+    }
+
+    #[test]
+    fn click_without_enough_motion_history_is_preserved() {
+        let events = vec![mouse(1_000, 0.60, 0.50, 0.0, MouseEventKind::LeftClick)];
+        assert!(has_click_focus(&events));
     }
 
     #[test]

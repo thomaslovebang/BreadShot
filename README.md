@@ -6,11 +6,15 @@
 
 FocusFlow is a focused Windows screen recorder. It records the screen and mouse locally, turns mouse actions into automatic zoom and pan, and exports a watermark-free MP4.
 
-The current product has one workflow: choose a display, save folder, and start/stop shortcut; record for as long as needed; then follow the local processing stages and play either the automatically directed video or the untouched source recording.
+The current product has one workflow: choose a display, save folder, and start/stop shortcut; record for as long as needed; then follow the local processing stages and play either the automatically directed video or the source recording without automatic camera movement.
 
 FocusFlow 0.2 introduces a recording-first workspace with a compact left navigation rail. The recording canvas owns the main area, while dedicated pages provide recording settings, interface language, and installed-version information. The active navigation item is visibly enlarged with a blue focus border.
 
 FocusFlow 0.3 adds native Windows audio capture. System playback is captured through WASAPI loopback, an optional selected microphone can be recorded at the same time, and both tracks are synchronized, mixed, limited, and encoded into the original and automatically directed MP4 files.
+
+FocusFlow 0.3.1 adds video-only cursor effects without changing Windows itself. Any of the 17 Windows cursor roles can be replaced independently with a `.cur` or fully animated `.ani` file, while unmodified roles continue to use the Windows cursor. One global size slider scales every role from the real Windows cursor baseline, with a centered animated preview and an independent reset-to-default action. Cursor choices, size, shortcut, recording options, and output location persist across launches.
+
+This release also suppresses automatic zoom when either mouse button is clicked while the pointer is still moving quickly, returns to the recording home page whenever recording ends, and substantially accelerates cursor compositing through frame-rate sampling, correct source-duration limits, and supported NVIDIA hardware encoding.
 
 ![FocusFlow Alpha recording interface](docs/assets/focusflow-alpha.png)
 
@@ -28,7 +32,7 @@ FocusFlow Alpha supports 64-bit Windows 10 and Windows 11. The first public vers
 4. Start recording, complete the demonstration, then press the shortcut again.
 5. Wait for local mouse analysis and automatic camera rendering, then play the final or original MP4.
 
-After a successful recording, the selected folder contains only two files: the untouched original MP4 and the automatically directed final MP4. Temporary mouse, camera, project, filter, and render-log files are removed automatically.
+After a successful recording, the selected folder contains only two files: the source MP4 and the automatically directed final MP4. When cursor effects are enabled, both files include the selected video-only cursor appearance. Temporary mouse, camera, project, filter, and render-log files are removed automatically.
 
 ## Build from source
 
@@ -68,6 +72,12 @@ cargo check --workspace
 - Native system-audio capture through Windows WASAPI loopback.
 - Optional microphone capture with device selection.
 - Synchronized system-audio and microphone mixing with AAC output in both saved MP4 files.
+- A dedicated Effects page for all 17 standard Windows cursor roles.
+- Per-role `.cur` replacement and fully animated `.ani` playback in previews and exported video.
+- A global 50–250% cursor-size control based on the current Windows cursor baseline.
+- Partial cursor customization: roles without a replacement continue to use their Windows appearance.
+- Persistent cursor files, cursor size, shortcut, recording options, display, language, and output folder.
+- Fast cursor compositing with bounded video duration and NVIDIA NVENC acceleration when available.
 - Recoverable error feedback that keeps the saved source recording accessible.
 
 Manual timelines, project opening, clip editing, camera keyframes, and director-style settings are outside the current product.

@@ -7,7 +7,7 @@ use focusflow_editor_core::{
     CameraKeyframe, Timeline as EditorTimeline, VideoClip, timeline_from_keyframes,
 };
 use focusflow_focus_engine::{DirectorProfile, SmartFocusEngine};
-use focusflow_platform_windows::{CaptureBounds, MouseTrackerHandle};
+use focusflow_platform_windows::{CaptureBounds, MouseTrackerHandle, cursor_render};
 use focusflow_project_store::{
     EditOperation, EditTimeline, FocusFlowProject, PROJECT_SCHEMA_VERSION, ProjectAssets,
     ProjectState, VideoClipEdit, load_edit_timeline, load_project, save_edit_timeline,
@@ -17,14 +17,16 @@ use focusflow_renderer::{FfmpegRenderer, Renderer};
 use audio_capture::{AudioCaptureHandle, AudioDeviceInfo};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs::{self, File},
-    io::{BufReader, BufWriter, Write},
+    io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::Mutex,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -54,6 +56,9 @@ struct ActiveRecording {
     audio_captures: Vec<AudioCaptureHandle>,
     audio_cache_paths: Vec<PathBuf>,
     audio_lead_seconds: Vec<f64>,
+    cursor_options: CursorOptions,
+    capture_width: i32,
+    capture_height: i32,
 }
 
 struct RecorderState {
@@ -82,6 +87,97 @@ struct ProcessingProgress {
     stage: &'static str,
     progress: u8,
     message: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorPreview {
+    path: String,
+    hotspot_x: u32,
+    hotspot_y: u32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorOptions {
+    enabled: bool,
+    custom_enabled: bool,
+    size_percent: u32,
+    custom_paths: HashMap<String, String>,
+}
+
+impl CursorOptions {
+    fn validate(&self) -> Result<(), String> {
+        if !(50..=250).contains(&self.size_percent) {
+            return Err("鼠标大小必须在 50% 到 250% 之间".to_string());
+        }
+        for (role, path) in &self.custom_paths {
+            if cursor_render::role_id(role).is_none() {
+                return Err(format!("未知鼠标指针角色：{role}"));
+            }
+            let path = std::path::Path::new(path);
+            let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default();
+            if !path.is_file()
+                || !(extension.eq_ignore_ascii_case("cur") || extension.eq_ignore_ascii_case("ani"))
+            {
+                return Err(format!("鼠标指针文件无效：{}", path.display()));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn render_cursor_preview(
+    app: tauri::AppHandle,
+    role: String,
+    custom_path: Option<String>,
+    size_percent: u32,
+) -> Result<CursorPreview, String> {
+    let custom = custom_path.as_deref().map(std::path::Path::new);
+    if let Some(path) = custom {
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if !path.is_file()
+            || !(extension.eq_ignore_ascii_case("cur") || extension.eq_ignore_ascii_case("ani"))
+        {
+            return Err("请选择有效的 .cur 或 .ani 指针文件".to_string());
+        }
+    }
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| format!("无法读取应用缓存目录：{error}"))?
+        .join("cursor-previews");
+    fs::create_dir_all(&cache).map_err(|error| format!("无法创建指针预览目录：{error}"))?;
+    let safe_role = role.replace(|character: char| !character.is_ascii_alphanumeric(), "_");
+    let animated = custom.is_some_and(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("ani")));
+    let output = cache.join(format!("{safe_role}-{size_percent}.{}", if animated { "gif" } else { "png" }));
+    let animation = cursor_render::render_cursor_animation(&role, custom, size_percent)?;
+    cursor_render::save_cursor_preview(&animation, &output)?;
+    app.asset_protocol_scope()
+        .allow_file(&output)
+        .map_err(|error| format!("无法授权指针预览：{error}"))?;
+    Ok(CursorPreview {
+        path: output.display().to_string(),
+        hotspot_x: animation.hotspot_x,
+        hotspot_y: animation.hotspot_y,
+        width: animation.width,
+        height: animation.height,
+    })
+}
+
+#[tauri::command]
+fn choose_cursor_file(app: tauri::AppHandle, initial_directory: Option<String>) -> Option<String> {
+    let mut picker = app.dialog().file().add_filter("Windows Cursor", &["cur", "ani"]);
+    if let Some(directory) = initial_directory.filter(|value| std::path::Path::new(value).is_dir()) {
+        picker = picker.set_directory(directory);
+    }
+    picker.blocking_pick_file()?.into_path().ok().map(|path| path.display().to_string())
 }
 
 fn emit_processing_progress(
@@ -860,9 +956,11 @@ fn camera_source_indices(original: &CameraTimeline, clips: &[VideoClipEdit]) -> 
 fn start_recording(
     capture_area: CaptureArea,
     audio_options: AudioOptions,
+    cursor_options: CursorOptions,
     app: tauri::AppHandle,
     state: State<'_, RecorderState>,
 ) -> Result<RecorderStatus, String> {
+    cursor_options.validate()?;
     let mut active = state
         .active
         .lock()
@@ -980,6 +1078,7 @@ fn start_recording(
     let offset_y = capture_bounds.y.to_string();
     let video_size = format!("{}x{}", capture_bounds.width, capture_bounds.height);
 
+    let draw_mouse = if cursor_options.enabled { "0" } else { "1" };
     let process_result = command(&ffmpeg)
         .args([
             "-hide_banner",
@@ -989,7 +1088,7 @@ fn start_recording(
             "-framerate",
             "60",
             "-draw_mouse",
-            "1",
+            draw_mouse,
             "-rtbufsize",
             "512M",
         ])
@@ -1044,6 +1143,9 @@ fn start_recording(
         audio_captures,
         audio_cache_paths,
         audio_lead_seconds,
+        cursor_options,
+        capture_width,
+        capture_height,
     });
     *state
         .last_source_video
@@ -1140,6 +1242,10 @@ fn stop_and_render(
         capture.stop()?;
     }
     mux_recorded_audio(recording)?;
+    if recording.cursor_options.enabled {
+        emit_processing_progress(app, "cursor", 32, "正在应用鼠标指针样式…");
+        apply_cursor_overlay(recording)?;
+    }
     emit_processing_progress(app, "analyzing", 42, "正在分析鼠标动作…");
     let timeline = generate_camera_timeline(recording)?;
     recording.project.duration_ms = Some(timeline.duration_ms);
@@ -1152,6 +1258,210 @@ fn stop_and_render(
         &recording.final_video_path,
     )?;
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct CursorTracePoint {
+    #[serde(rename = "type")]
+    line_type: String,
+    time_ms: Option<u64>,
+    normalized_x: Option<f64>,
+    normalized_y: Option<f64>,
+    cursor_role: Option<String>,
+}
+
+fn apply_cursor_overlay(recording: &ActiveRecording) -> Result<(), String> {
+    let trace = File::open(&recording.mouse_events_path)
+        .map_err(|error| format!("无法读取鼠标轨迹：{error}"))?;
+    let mut points = Vec::new();
+    for line in BufReader::new(trace).lines() {
+        let line = line.map_err(|error| format!("无法读取鼠标轨迹：{error}"))?;
+        let Ok(point) = serde_json::from_str::<CursorTracePoint>(&line) else {
+            continue;
+        };
+        if point.line_type != "mouse" {
+            continue;
+        }
+        if let (Some(time_ms), Some(x), Some(y)) =
+            (point.time_ms, point.normalized_x, point.normalized_y)
+        {
+            points.push((
+                time_ms,
+                x.clamp(0.0, 1.0),
+                y.clamp(0.0, 1.0),
+                point.cursor_role.unwrap_or_else(|| "normal".to_string()),
+            ));
+        }
+    }
+    if points.is_empty() {
+        return Ok(());
+    }
+    // The tracker can report far more often than the 60 fps video can display.
+    // Keep only the latest position for each frame to avoid a huge sendcmd script.
+    let mut sampled = Vec::with_capacity(points.len().min(36_000));
+    for point in points {
+        let bucket = point.0 / 16;
+        if sampled.last().is_some_and(|previous: &(u64, f64, f64, String)| previous.0 / 16 == bucket) {
+            *sampled.last_mut().expect("sample exists") = point;
+        } else {
+            sampled.push(point);
+        }
+    }
+    let points = sampled;
+
+    let work_dir = recording
+        .output_path
+        .parent()
+        .ok_or_else(|| "无法定位录制目录".to_string())?;
+    let stem = recording
+        .output_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "无法生成鼠标合成文件名".to_string())?;
+    let cursor_dir = work_dir.join(format!(".{stem}-cursors"));
+    fs::create_dir_all(&cursor_dir).map_err(|error| format!("无法创建鼠标合成目录：{error}"))?;
+
+    let mut roles = points
+        .iter()
+        .map(|(_, _, _, role)| role.clone())
+        .collect::<Vec<_>>();
+    roles.sort();
+    roles.dedup();
+    roles.retain(|role| cursor_render::role_id(role).is_some());
+    if roles.is_empty() {
+        roles.push("normal".to_string());
+    }
+
+    struct OverlayAsset {
+        input: PathBuf,
+        animated: bool,
+        hotspot_x: u32,
+        hotspot_y: u32,
+    }
+    let mut rendered: HashMap<String, OverlayAsset> = HashMap::new();
+    for role in &roles {
+        let custom = recording
+            .cursor_options
+            .custom_enabled
+            .then(|| recording.cursor_options.custom_paths.get(role))
+            .flatten()
+            .map(std::path::Path::new);
+        let animation = cursor_render::render_cursor_animation(role, custom, recording.cursor_options.size_percent)?;
+        if animation.frames.len() == 1 {
+            let png = cursor_dir.join(format!("{role}.png"));
+            animation.frames[0].image.save(&png).map_err(|error| format!("无法保存鼠标指针帧：{error}"))?;
+            rendered.insert(role.clone(), OverlayAsset { input: png, animated: false, hotspot_x: animation.hotspot_x, hotspot_y: animation.hotspot_y });
+        } else {
+            let role_dir = cursor_dir.join(role);
+            fs::create_dir_all(&role_dir).map_err(|error| format!("无法创建 ANI 帧目录：{error}"))?;
+            let concat = role_dir.join("animation.ffconcat");
+            let mut list = BufWriter::new(File::create(&concat).map_err(|error| format!("无法创建 ANI 时间线：{error}"))?);
+            writeln!(list, "ffconcat version 1.0").map_err(|error| format!("无法写入 ANI 时间线：{error}"))?;
+            let mut last = None;
+            for (index, frame) in animation.frames.iter().enumerate() {
+                let frame_path = role_dir.join(format!("frame-{index:04}.png"));
+                frame.image.save(&frame_path).map_err(|error| format!("无法保存 ANI 帧：{error}"))?;
+                let escaped = frame_path.display().to_string().replace('\\', "/").replace('\'', "'\\''");
+                writeln!(list, "file '{escaped}'\nduration {:.6}", f64::from(frame.duration_ms) / 1000.0)
+                    .map_err(|error| format!("无法写入 ANI 时间线：{error}"))?;
+                last = Some(escaped);
+            }
+            if let Some(last) = last { writeln!(list, "file '{last}'").map_err(|error| format!("无法写入 ANI 时间线：{error}"))?; }
+            list.flush().map_err(|error| format!("无法保存 ANI 时间线：{error}"))?;
+            rendered.insert(role.clone(), OverlayAsset { input: concat, animated: true, hotspot_x: animation.hotspot_x, hotspot_y: animation.hotspot_y });
+        }
+    }
+
+    let commands_path = cursor_dir.join("commands.txt");
+    let mut commands = BufWriter::new(
+        File::create(&commands_path).map_err(|error| format!("无法创建鼠标合成指令：{error}"))?,
+    );
+    let mut previous_role: Option<String> = None;
+    for (time_ms, normalized_x, normalized_y, recorded_role) in points {
+        let role = if rendered.contains_key(&recorded_role) {
+            recorded_role
+        } else {
+            "normal".to_string()
+        };
+        let info = rendered
+            .get(&role)
+            .ok_or_else(|| "无法读取鼠标图像信息".to_string())?;
+        let x = (normalized_x * f64::from(recording.capture_width) - f64::from(info.hotspot_x))
+            .round() as i32;
+        let y = (normalized_y * f64::from(recording.capture_height) - f64::from(info.hotspot_y))
+            .round() as i32;
+        let timestamp = time_ms as f64 / 1000.0;
+        if previous_role.as_deref() != Some(&role) {
+            if let Some(previous) = previous_role.as_deref() {
+                writeln!(commands, "{timestamp:.6} overlay@{previous} x -10000;")
+                    .map_err(|error| format!("无法写入鼠标合成指令：{error}"))?;
+            }
+            previous_role = Some(role.clone());
+        }
+        writeln!(commands, "{timestamp:.6} overlay@{role} x {x};")
+            .and_then(|_| writeln!(commands, "{timestamp:.6} overlay@{role} y {y};"))
+            .map_err(|error| format!("无法写入鼠标合成指令：{error}"))?;
+    }
+    commands.flush().map_err(|error| format!("无法保存鼠标合成指令：{error}"))?;
+
+    let command_name = commands_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "无法读取鼠标合成指令文件名".to_string())?;
+    let mut filters = vec![format!("[0:v]sendcmd=f='{command_name}'[cursorbase]")];
+    let mut current = "cursorbase".to_string();
+    for (index, role) in roles.iter().enumerate() {
+        let next = format!("cursor{index}");
+        filters.push(format!(
+            "[{current}][{}:v]overlay@{role}=x=-10000:y=-10000:shortest=1:eof_action=repeat[{next}]",
+            index + 1
+        ));
+        current = next;
+    }
+    let filter = filters.join(";");
+    let composited_path = cursor_dir.join("source-with-cursor.mp4");
+    let mut process = command(&recording.ffmpeg_path);
+    process.current_dir(&cursor_dir).args(["-hide_banner", "-y", "-i"])
+        .arg(&recording.output_path);
+    for role in &roles {
+        let asset = rendered.get(role).ok_or_else(|| "无法读取鼠标图像".to_string())?;
+        if asset.animated {
+            process.args(["-stream_loop", "-1", "-f", "concat", "-safe", "0", "-i"]).arg(&asset.input);
+        } else {
+            process.args(["-loop", "1", "-i"]).arg(&asset.input);
+        }
+    }
+    process.args(["-filter_complex", &filter, "-map", &format!("[{current}]"), "-map", "0:a?"]);
+    if h264_nvenc_available(&recording.ffmpeg_path) {
+        process.args(["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0"]);
+    } else {
+        process.args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"]);
+    }
+    let status = process
+        .args(["-pix_fmt", "yuv420p", "-c:a", "copy", "-shortest", "-movflags", "+faststart"])
+        .arg(&composited_path)
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|error| format!("无法启动鼠标指针合成：{error}"))?;
+    if !status.success() {
+        return Err("鼠标指针合成失败".to_string());
+    }
+    fs::remove_file(&recording.output_path)
+        .map_err(|error| format!("无法替换原始视频：{error}"))?;
+    fs::rename(&composited_path, &recording.output_path)
+        .map_err(|error| format!("无法保存带鼠标指针的原始视频：{error}"))?;
+    let _ = fs::remove_dir_all(&cursor_dir);
+    Ok(())
+}
+
+fn h264_nvenc_available(ffmpeg: &PathBuf) -> bool {
+    command(ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=size=64x64:rate=1", "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "NUL"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn mux_recorded_audio(recording: &ActiveRecording) -> Result<(), String> {
@@ -1351,6 +1661,8 @@ fn main() {
             start_recording,
             stop_recording,
             list_audio_devices,
+            render_cursor_preview,
+            choose_cursor_file,
             open_final_video,
             open_source_video,
             reveal_output

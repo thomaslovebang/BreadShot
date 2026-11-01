@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { availableMonitors, getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -33,14 +33,43 @@ type ProcessingProgress = {
 type AudioDevice = { id: string; name: string; isDefault: boolean };
 type AudioCapabilities = { systemAudioAvailable: boolean; microphones: AudioDevice[] };
 
-type AppPage = "record" | "settings" | "language" | "update";
+type AppPage = "record" | "settings" | "effects" | "language" | "update";
 type AppLanguage = "system" | "zh" | "en" | "ja" | "fr" | "de" | "es" | "ar";
 type ResolvedLanguage = Exclude<AppLanguage, "system">;
 
 const DEFAULT_SHORTCUT = "F8";
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.3.1";
 const SINGLE_KEY_PATTERN = /^(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4]))$/;
 const initialStatus: RecorderStatus = { isRecording: false, ffmpegAvailable: false, outputPath: null, outputDirectory: "", finalVideoPath: null };
+
+const cursorRoles = [
+  ["normal", "正常选择"], ["help", "帮助选择"], ["app_starting", "后台运行"], ["wait", "忙"],
+  ["crosshair", "精确选择"], ["text", "文本选择"], ["handwriting", "手写"], ["unavailable", "不可用"],
+  ["vertical_resize", "垂直调整大小"], ["horizontal_resize", "水平调整大小"], ["diagonal_resize_1", "沿对角线调整 1"],
+  ["diagonal_resize_2", "沿对角线调整 2"], ["move", "移动"], ["alternate", "候选"], ["link", "链接选择"],
+  ["location", "位置选择"], ["person", "个人选择"],
+] as const;
+type CursorRole = typeof cursorRoles[number][0];
+type CursorPreview = { path: string; hotspotX: number; hotspotY: number; width: number; height: number };
+
+const effectsTranslations: Record<ResolvedLanguage, { nav: string; title: string; lead: string; custom: string; customHelp: string; size: string; sizeHelp: string; choose: string; restore: string; resetSize: string; windowsDefault: string; preview: string }> = {
+  zh: { nav: "特效设置", title: "特效设置", lead: "只改变导出视频中的鼠标指针，不修改 Windows 系统设置。", custom: "自定义鼠标指针", customHelp: "可单独替换任意角色的 CUR 或 ANI 文件", size: "鼠标大小", sizeHelp: "全局等比例应用到全部指针角色", choose: "选择文件", restore: "恢复默认", resetSize: "恢复默认大小", windowsDefault: "Windows 默认", preview: "预览角色" },
+  en: { nav: "Effects", title: "Effects", lead: "Changes only the pointer in exported videos, never Windows settings.", custom: "Custom pointers", customHelp: "Replace any role with a CUR or ANI file", size: "Pointer size", sizeHelp: "Scales every pointer role proportionally", choose: "Choose file", restore: "Restore", resetSize: "Default size", windowsDefault: "Windows default", preview: "Preview role" },
+  ja: { nav: "エフェクト", title: "エフェクト設定", lead: "書き出す動画だけを変更し、Windows設定は変更しません。", custom: "カスタムポインター", customHelp: "各役割に CUR / ANI を設定", size: "ポインターサイズ", sizeHelp: "全役割を同じ倍率で拡大縮小", choose: "ファイル選択", restore: "既定に戻す", resetSize: "既定のサイズ", windowsDefault: "Windows既定", preview: "プレビュー" },
+  fr: { nav: "Effets", title: "Effets", lead: "Modifie uniquement le pointeur de la vidéo exportée.", custom: "Pointeurs personnalisés", customHelp: "CUR ou ANI pour chaque rôle", size: "Taille du pointeur", sizeHelp: "Échelle globale pour tous les rôles", choose: "Choisir", restore: "Restaurer", resetSize: "Taille par défaut", windowsDefault: "Windows par défaut", preview: "Aperçu" },
+  de: { nav: "Effekte", title: "Effekte", lead: "Ändert nur den Zeiger im exportierten Video.", custom: "Eigene Zeiger", customHelp: "CUR oder ANI für jede Rolle", size: "Zeigergröße", sizeHelp: "Globale Skalierung aller Rollen", choose: "Auswählen", restore: "Zurücksetzen", resetSize: "Standardgröße", windowsDefault: "Windows-Standard", preview: "Vorschau" },
+  es: { nav: "Efectos", title: "Efectos", lead: "Solo cambia el puntero del vídeo exportado.", custom: "Punteros personalizados", customHelp: "CUR o ANI para cada función", size: "Tamaño", sizeHelp: "Escala global para todos los punteros", choose: "Elegir", restore: "Restaurar", resetSize: "Tamaño predeterminado", windowsDefault: "Windows predeterminado", preview: "Vista previa" },
+  ar: { nav: "التأثيرات", title: "إعدادات التأثيرات", lead: "يغير المؤشر في الفيديو المصدر فقط دون إعدادات Windows.", custom: "مؤشرات مخصصة", customHelp: "ملف CUR أو ANI لكل دور", size: "حجم المؤشر", sizeHelp: "تحجيم موحد لجميع المؤشرات", choose: "اختيار", restore: "استعادة", resetSize: "الحجم الافتراضي", windowsDefault: "Windows الافتراضي", preview: "معاينة" },
+};
+
+function readCursorPaths(): Partial<Record<CursorRole, string>> {
+  try { return JSON.parse(localStorage.getItem("focusflow.cursorPaths") || "{}"); } catch { return {}; }
+}
+
+function readCursorSize() {
+  const value = Number(localStorage.getItem("focusflow.cursorSize") || 100);
+  return Number.isFinite(value) ? Math.min(250, Math.max(50, value)) : 100;
+}
 
 const translations = {
   zh: { record: "录制", settings: "录制设置", language: "语言", update: "更新", ready: "可以开始", recording: "正在录制", working: "正在处理", eyebrow: "自动运镜录屏", idleTitle: "按下录制，", idleAccent: "镜头交给 FocusFlow。", liveTitle: "正在录制，", liveAccent: "专注演示就好。", subtitle: "录制你的操作，自动生成平滑缩放与跟随镜头。", start: "开始录制", stop: "结束录制", wait: "请稍候…", shortcutHint: "随时开始或结束", detecting: "正在检测显示器", unlimited: "不限时长", watermark: "无水印 MP4", autoZoom: "自动缩放跟随", finalReady: "成片已准备好", openFolder: "打开文件夹", playFinal: "播放最终视频", playSource: "播放原始视频", settingsLead: "管理保存位置、录制屏幕和全局快捷键。", saveLocation: "保存位置", choose: "选择", display: "录制显示器", displayHelp: "只捕获选择的这一块屏幕", shortcut: "全局快捷键", shortcutHelp: "同一个按键开始与结束", change: "更改", privacy: "本机私密处理", privacyHelp: "画面与鼠标数据不会上传", languageLead: "选择 FocusFlow 的界面语言。", followSystem: "跟随系统", current: "当前", updateLead: "查看当前安装版本。联网更新将在后续版本提供。", currentVersion: "当前版本", latestLocal: "当前已安装版本", updateSoon: "自动检查与联网更新即将推出", processingLocal: "正在本机完成处理，请保持 FocusFlow 运行", failed: "这次成片没有顺利生成", savedFiles: "查看已保存文件" },
@@ -82,6 +111,7 @@ function Glyph({ name }: { name: AppPage }) {
   const paths = {
     record: <><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2.5" fill="currentColor" /></>,
     settings: <><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6" /></>,
+    effects: <><path d="m12 3 1.5 4.2L18 8.5l-3.5 2.7.2 4.6-3.7-2.6-4 1.6 1.3-4.4-3-3.5 4.6-.1Z" /><path d="M18 16v5M15.5 18.5h5" /></>,
     language: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" /></>,
     update: <><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 5v6h-6" /></>,
   };
@@ -131,6 +161,11 @@ function App() {
   const [systemAudio, setSystemAudio] = useState(localStorage.getItem("focusflow.systemAudio") !== "false");
   const [microphone, setMicrophone] = useState(localStorage.getItem("focusflow.microphone") === "true");
   const [microphoneDeviceId, setMicrophoneDeviceId] = useState(localStorage.getItem("focusflow.microphoneDevice") || "");
+  const [customCursors, setCustomCursors] = useState(localStorage.getItem("focusflow.customCursors") === "true");
+  const [cursorSize, setCursorSize] = useState(readCursorSize);
+  const [cursorPaths, setCursorPaths] = useState<Partial<Record<CursorRole, string>>>(readCursorPaths);
+  const [cursorPreviewRole, setCursorPreviewRole] = useState<CursorRole>("normal");
+  const [cursorPreview, setCursorPreview] = useState<CursorPreview | null>(null);
   const statusRef = useRef(status);
   const busyRef = useRef(busy);
   const shortcutRef = useRef(shortcut);
@@ -140,6 +175,16 @@ function App() {
   const resolvedLanguage = language === "system" ? systemLanguage() : language;
   const t = translations[resolvedLanguage];
   const audioText = audioTranslations[resolvedLanguage];
+  const effectsText = effectsTranslations[resolvedLanguage];
+
+  useEffect(() => {
+    let cancelled = false;
+    const customPath = customCursors ? cursorPaths[cursorPreviewRole] || null : null;
+    void invoke<CursorPreview>("render_cursor_preview", { role: cursorPreviewRole, customPath, sizePercent: cursorSize })
+      .then((preview) => { if (!cancelled) setCursorPreview(preview); })
+      .catch((error) => { if (!cancelled) setMessage(`指针预览失败：${String(error)}`); });
+    return () => { cancelled = true; };
+  }, [customCursors, cursorPaths, cursorPreviewRole, cursorSize]);
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { busyRef.current = busy; }, [busy]);
@@ -282,6 +327,7 @@ function App() {
     setMessage(wasRecording ? "正在根据鼠标动作生成自动运镜视频…" : "正在启动录制…");
 
     if (wasRecording) {
+      setActivePage("record");
       const processing = { ...statusRef.current, isRecording: false };
       statusRef.current = processing;
       setStatus(processing);
@@ -309,6 +355,12 @@ function App() {
             systemAudio: systemAudio && audioCapabilities.systemAudioAvailable,
             microphone: microphone && audioCapabilities.microphones.length > 0,
             microphoneDeviceId: microphoneDeviceId || null,
+          },
+          cursorOptions: {
+            enabled: cursorSize !== 100 || (customCursors && Object.keys(cursorPaths).length > 0),
+            customEnabled: customCursors,
+            sizePercent: cursorSize,
+            customPaths: cursorPaths,
           },
         });
       }
@@ -348,6 +400,34 @@ function App() {
     } catch (error) {
       setMessage(String(error));
     }
+  }
+
+  async function chooseCursorFile(role: CursorRole) {
+    if (status.isRecording || busy) return;
+    const selected = await invoke<string | null>("choose_cursor_file", { initialDirectory: localStorage.getItem("focusflow.cursorDirectory") });
+    if (!selected) return;
+    const next = { ...cursorPaths, [role]: selected };
+    setCursorPaths(next);
+    setCustomCursors(true);
+    setCursorPreviewRole(role);
+    localStorage.setItem("focusflow.cursorPaths", JSON.stringify(next));
+    localStorage.setItem("focusflow.customCursors", "true");
+    localStorage.setItem("focusflow.cursorDirectory", selected.replace(/[\\/][^\\/]+$/, ""));
+    setMessage(`已替换${cursorRoles.find(([id]) => id === role)?.[1] || role}`);
+  }
+
+  function restoreCursorSize() {
+    setCursorSize(100);
+    localStorage.setItem("focusflow.cursorSize", "100");
+    setMessage("鼠标大小已恢复为 Windows 默认大小");
+  }
+
+  function restoreCursor(role: CursorRole) {
+    const next = { ...cursorPaths };
+    delete next[role];
+    setCursorPaths(next);
+    localStorage.setItem("focusflow.cursorPaths", JSON.stringify(next));
+    setMessage("这个角色已恢复为 Windows 默认指针");
   }
 
   async function applyShortcut() {
@@ -399,9 +479,8 @@ function App() {
         <aside className="side-rail">
           <button className={`rail-brand ${activePage === "record" ? "active" : ""}`} type="button" aria-label={t.record} onClick={() => setActivePage("record")}><span className="brand-mark"><i /></span></button>
           <nav className="rail-navigation" aria-label="FocusFlow">
-            {(["settings", "language", "update"] as AppPage[]).map((page) => (
-              <button key={page} type="button" className={`rail-button ${activePage === page ? "active" : ""}`} title={t[page]} aria-label={t[page]} aria-current={activePage === page ? "page" : undefined} onClick={() => setActivePage(page)}><Glyph name={page} /><span>{t[page]}</span></button>
-            ))}
+            <button type="button" className={`rail-button ${activePage === "effects" ? "active" : ""}`} title={effectsText.nav} aria-label={effectsText.nav} aria-current={activePage === "effects" ? "page" : undefined} onClick={() => setActivePage("effects")}><Glyph name="effects" /><span>{effectsText.nav}</span></button>
+            {(["settings", "language", "update"] as const).map((page) => <button key={page} type="button" className={`rail-button ${activePage === page ? "active" : ""}`} title={t[page]} aria-label={t[page]} aria-current={activePage === page ? "page" : undefined} onClick={() => setActivePage(page)}><Glyph name={page} /><span>{t[page]}</span></button>)}
           </nav>
           <span className="rail-version">v{APP_VERSION}</span>
         </aside>
@@ -448,6 +527,27 @@ function App() {
                   <div className="setting-row"><span className="setting-index">04</span><div className="setting-copy"><strong>{audioText.system}</strong><span>{audioCapabilities.systemAudioAvailable ? audioText.systemHelp : audioText.unavailable}</span></div><button type="button" role="switch" aria-checked={systemAudio} className={`toggle-switch ${systemAudio ? "active" : ""}`} disabled={!audioCapabilities.systemAudioAvailable || status.isRecording || busy} onClick={() => { const next = !systemAudio; setSystemAudio(next); localStorage.setItem("focusflow.systemAudio", String(next)); }}><i /></button></div>
                   <div className="setting-row"><span className="setting-index">05</span><div className="setting-copy"><strong>{audioText.microphone}</strong><span>{audioCapabilities.microphones.length > 0 ? audioText.microphoneHelp : audioText.noMicrophone}</span></div><div className="audio-control"><select className="display-select microphone-select" value={microphoneDeviceId} disabled={!microphone || status.isRecording || busy || audioCapabilities.microphones.length === 0} onChange={(event) => { setMicrophoneDeviceId(event.target.value); localStorage.setItem("focusflow.microphoneDevice", event.target.value); }}>{audioCapabilities.microphones.map((device) => <option key={device.id} value={device.id}>{device.name}{device.isDefault ? ` · ${audioText.defaultDevice}` : ""}</option>)}</select><button type="button" role="switch" aria-checked={microphone} className={`toggle-switch ${microphone ? "active" : ""}`} disabled={audioCapabilities.microphones.length === 0 || status.isRecording || busy} onClick={() => { const next = !microphone; setMicrophone(next); localStorage.setItem("focusflow.microphone", String(next)); }}><i /></button></div></div>
                   <div className="privacy-note"><span>⌾</span><div><strong>{t.privacy}</strong><small>{t.privacyHelp}</small></div></div>
+                </div>
+              </section>
+            )}
+
+            {activePage === "effects" && (
+              <section className="content-page effects-page">
+                <div className="page-heading"><span className="section-kicker">02 / EFFECTS</span><h1>{effectsText.title}</h1><p>{effectsText.lead}</p></div>
+                <div className="effects-layout">
+                  <section className="cursor-config-card">
+                    <div className="effects-card-heading"><div><strong>{effectsText.custom}</strong><span>{effectsText.customHelp}</span></div><button type="button" role="switch" aria-checked={customCursors} className={`toggle-switch ${customCursors ? "active" : ""}`} disabled={status.isRecording || busy} onClick={() => { const next = !customCursors; setCustomCursors(next); localStorage.setItem("focusflow.customCursors", String(next)); }}><i /></button></div>
+                    <div className="cursor-role-grid">
+                      {cursorRoles.map(([role, label]) => <button key={role} type="button" className={`cursor-role ${cursorPreviewRole === role ? "active" : ""}`} onClick={() => setCursorPreviewRole(role)}><span>{label}</span><small>{customCursors && cursorPaths[role] ? fileName(cursorPaths[role]!) : effectsText.windowsDefault}</small></button>)}
+                    </div>
+                    <div className="cursor-role-actions"><button type="button" className="primary-button compact" disabled={status.isRecording || busy} onClick={() => void chooseCursorFile(cursorPreviewRole)}>{effectsText.choose}</button><button type="button" className="secondary-button" disabled={!cursorPaths[cursorPreviewRole] || status.isRecording || busy} onClick={() => restoreCursor(cursorPreviewRole)}>{effectsText.restore}</button></div>
+                  </section>
+                  <section className="cursor-preview-card">
+                    <div className="effects-card-heading"><div><strong>{effectsText.size}</strong><span>{effectsText.sizeHelp}</span></div><b>{cursorSize}%</b></div>
+                    <div className="cursor-preview-stage">{cursorPreview && <img src={convertFileSrc(cursorPreview.path)} alt={cursorRoles.find(([role]) => role === cursorPreviewRole)?.[1]} />}</div>
+                    <label className="cursor-size-slider"><span>50%</span><input type="range" min="50" max="250" step="5" value={cursorSize} disabled={status.isRecording || busy} onChange={(event) => { const next = Number(event.target.value); setCursorSize(next); localStorage.setItem("focusflow.cursorSize", String(next)); }} /><span>250%</span></label>
+                    <div className="cursor-preview-controls"><label className="cursor-preview-select"><span>{effectsText.preview}</span><select className="display-select" value={cursorPreviewRole} onChange={(event) => setCursorPreviewRole(event.target.value as CursorRole)}>{cursorRoles.map(([role, label]) => <option key={role} value={role}>{label}</option>)}</select></label><button type="button" className="secondary-button reset-size-button" disabled={cursorSize === 100 || status.isRecording || busy} onClick={restoreCursorSize}>{effectsText.resetSize}</button></div>
+                  </section>
                 </div>
               </section>
             )}
