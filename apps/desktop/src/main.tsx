@@ -30,9 +30,44 @@ type ProcessingProgress = {
   message: string;
 };
 
+type AppPage = "record" | "settings" | "language" | "update";
+type AppLanguage = "system" | "zh" | "en" | "ja" | "fr";
+type ResolvedLanguage = Exclude<AppLanguage, "system">;
+
 const DEFAULT_SHORTCUT = "F8";
+const APP_VERSION = "0.2.0";
 const SINGLE_KEY_PATTERN = /^(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4]))$/;
 const initialStatus: RecorderStatus = { isRecording: false, ffmpegAvailable: false, outputPath: null, outputDirectory: "", finalVideoPath: null };
+
+const translations = {
+  zh: { record: "录制", settings: "录制设置", language: "语言", update: "更新", ready: "可以开始", recording: "正在录制", working: "正在处理", eyebrow: "自动运镜录屏", idleTitle: "按下录制，", idleAccent: "镜头交给 FocusFlow。", liveTitle: "正在录制，", liveAccent: "专注演示就好。", subtitle: "录制你的操作，自动生成平滑缩放与跟随镜头。", start: "开始录制", stop: "结束录制", wait: "请稍候…", shortcutHint: "随时开始或结束", detecting: "正在检测显示器", unlimited: "不限时长", watermark: "无水印 MP4", autoZoom: "自动缩放跟随", finalReady: "成片已准备好", openFolder: "打开文件夹", playFinal: "播放最终视频", playSource: "播放原始视频", settingsLead: "管理保存位置、录制屏幕和全局快捷键。", saveLocation: "保存位置", choose: "选择", display: "录制显示器", displayHelp: "只捕获选择的这一块屏幕", shortcut: "全局快捷键", shortcutHelp: "同一个按键开始与结束", change: "更改", privacy: "本机私密处理", privacyHelp: "画面与鼠标数据不会上传", languageLead: "选择 FocusFlow 的界面语言。", followSystem: "跟随系统", current: "当前", updateLead: "查看当前安装版本。联网更新将在后续版本提供。", currentVersion: "当前版本", latestLocal: "当前已安装版本", updateSoon: "自动检查与联网更新即将推出", processingLocal: "正在本机完成处理，请保持 FocusFlow 运行", failed: "这次成片没有顺利生成", savedFiles: "查看已保存文件" },
+  en: { record: "Record", settings: "Recording settings", language: "Language", update: "Updates", ready: "Ready", recording: "Recording", working: "Processing", eyebrow: "Automatic camera recorder", idleTitle: "Press record,", idleAccent: "FocusFlow handles the camera.", liveTitle: "Recording now,", liveAccent: "focus on your demo.", subtitle: "Record your actions and automatically create smooth zoom and camera motion.", start: "Start recording", stop: "Stop recording", wait: "Please wait…", shortcutHint: "Start or stop anytime", detecting: "Detecting displays", unlimited: "Unlimited duration", watermark: "Watermark-free MP4", autoZoom: "Automatic zoom", finalReady: "Your video is ready", openFolder: "Open folder", playFinal: "Play final video", playSource: "Play source video", settingsLead: "Manage the save folder, recorded display, and global shortcut.", saveLocation: "Save location", choose: "Choose", display: "Recorded display", displayHelp: "Capture only the selected display", shortcut: "Global shortcut", shortcutHelp: "The same key starts and stops", change: "Change", privacy: "Private local processing", privacyHelp: "Screen and mouse data never leave this device", languageLead: "Choose the FocusFlow interface language.", followSystem: "Follow system", current: "Current", updateLead: "View the installed version. Online updates will arrive later.", currentVersion: "Current version", latestLocal: "Installed on this computer", updateSoon: "Automatic update checks are coming soon", processingLocal: "Processing locally. Keep FocusFlow open.", failed: "The final video could not be created", savedFiles: "View saved files" },
+  ja: { record: "録画", settings: "録画設定", language: "言語", update: "更新", ready: "準備完了", recording: "録画中", working: "処理中", eyebrow: "自動カメラ録画", idleTitle: "録画を押せば、", idleAccent: "カメラは FocusFlow に。", liveTitle: "録画中です。", liveAccent: "デモに集中してください。", subtitle: "操作を録画し、滑らかなズームと追従を自動生成します。", start: "録画開始", stop: "録画終了", wait: "お待ちください…", shortcutHint: "いつでも開始・終了", detecting: "ディスプレイを検出中", unlimited: "時間制限なし", watermark: "透かしなし MP4", autoZoom: "自動ズーム", finalReady: "動画の準備ができました", openFolder: "フォルダーを開く", playFinal: "完成動画を再生", playSource: "元動画を再生", settingsLead: "保存先、録画画面、グローバルキーを管理します。", saveLocation: "保存先", choose: "選択", display: "録画ディスプレイ", displayHelp: "選択した画面だけを録画", shortcut: "グローバルキー", shortcutHelp: "同じキーで開始と終了", change: "変更", privacy: "ローカル処理", privacyHelp: "画面とマウス情報はアップロードされません", languageLead: "FocusFlow の表示言語を選択します。", followSystem: "システムに従う", current: "選択中", updateLead: "現在のバージョンを表示します。オンライン更新は今後対応予定です。", currentVersion: "現在のバージョン", latestLocal: "このPCにインストール済み", updateSoon: "自動更新は今後対応予定", processingLocal: "ローカルで処理中です。FocusFlowを閉じないでください。", failed: "完成動画を生成できませんでした", savedFiles: "保存ファイルを見る" },
+  fr: { record: "Enregistrer", settings: "Réglages d’enregistrement", language: "Langue", update: "Mises à jour", ready: "Prêt", recording: "Enregistrement", working: "Traitement", eyebrow: "Enregistreur à caméra automatique", idleTitle: "Lancez l’enregistrement,", idleAccent: "FocusFlow gère la caméra.", liveTitle: "Enregistrement en cours,", liveAccent: "concentrez-vous sur la démo.", subtitle: "Enregistrez vos actions et créez automatiquement des zooms fluides.", start: "Démarrer", stop: "Arrêter", wait: "Veuillez patienter…", shortcutHint: "Démarrer ou arrêter à tout moment", detecting: "Détection des écrans", unlimited: "Durée illimitée", watermark: "MP4 sans filigrane", autoZoom: "Zoom automatique", finalReady: "Votre vidéo est prête", openFolder: "Ouvrir le dossier", playFinal: "Lire la vidéo finale", playSource: "Lire la vidéo source", settingsLead: "Gérez le dossier, l’écran enregistré et le raccourci global.", saveLocation: "Emplacement", choose: "Choisir", display: "Écran enregistré", displayHelp: "Capturer uniquement l’écran sélectionné", shortcut: "Raccourci global", shortcutHelp: "La même touche démarre et arrête", change: "Modifier", privacy: "Traitement local privé", privacyHelp: "Les données ne quittent jamais cet appareil", languageLead: "Choisissez la langue de FocusFlow.", followSystem: "Suivre le système", current: "Actuel", updateLead: "Consultez la version installée. Les mises à jour en ligne arriveront plus tard.", currentVersion: "Version actuelle", latestLocal: "Installée sur cet ordinateur", updateSoon: "La mise à jour automatique arrive bientôt", processingLocal: "Traitement local en cours. Gardez FocusFlow ouvert.", failed: "La vidéo finale n’a pas pu être créée", savedFiles: "Voir les fichiers" },
+} as const;
+
+function systemLanguage(): ResolvedLanguage {
+  const locale = navigator.language.toLowerCase();
+  if (locale.startsWith("zh")) return "zh";
+  if (locale.startsWith("ja")) return "ja";
+  if (locale.startsWith("fr")) return "fr";
+  return "en";
+}
+
+function readSavedLanguage(): AppLanguage {
+  const saved = localStorage.getItem("focusflow.language");
+  return saved === "zh" || saved === "en" || saved === "ja" || saved === "fr" ? saved : "system";
+}
+
+function Glyph({ name }: { name: AppPage }) {
+  const paths = {
+    record: <><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2.5" fill="currentColor" /></>,
+    settings: <><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M7 14v6" /></>,
+    language: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" /></>,
+    update: <><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 5v6h-6" /></>,
+  };
+  return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
+}
 
 function readSavedShortcut() {
   const value = (localStorage.getItem("focusflow.shortcut") || "").toUpperCase();
@@ -60,6 +95,8 @@ function readableError(error: unknown) {
 }
 
 function App() {
+  const [activePage, setActivePage] = useState<AppPage>("record");
+  const [language, setLanguage] = useState<AppLanguage>(readSavedLanguage);
   const [status, setStatus] = useState(initialStatus);
   const [elapsed, setElapsed] = useState(0);
   const [busy, setBusy] = useState(true);
@@ -76,6 +113,9 @@ function App() {
   const shortcutRef = useRef(shortcut);
   const shortcutDialogRef = useRef(shortcutDialogOpen);
   const toggleRef = useRef<() => Promise<void>>(async () => undefined);
+  const shortcutQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const resolvedLanguage = language === "system" ? systemLanguage() : language;
+  const t = translations[resolvedLanguage];
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { busyRef.current = busy; }, [busy]);
@@ -129,22 +169,24 @@ function App() {
   }, []);
 
   useEffect(() => {
-    let disposed = false;
-    async function installShortcut() {
-      try {
+    let active = true;
+    shortcutQueueRef.current = shortcutQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
         await unregister(shortcut).catch(() => undefined);
-        if (disposed) return;
+        if (!active) return;
         await register(shortcut, (event) => {
           if (event.state === "Pressed" && !shortcutDialogRef.current) void toggleRef.current();
         });
-      } catch (error) {
-        setMessage(`快捷键不可用：${String(error)}`);
-      }
-    }
-    void installShortcut();
+      })
+      .catch((error) => {
+        if (active) setMessage(`快捷键不可用：${String(error)}`);
+      });
     return () => {
-      disposed = true;
-      void unregister(shortcut).catch(() => undefined);
+      active = false;
+      shortcutQueueRef.current = shortcutQueueRef.current
+        .catch(() => undefined)
+        .then(() => unregister(shortcut).catch(() => undefined));
     };
   }, [shortcut]);
 
@@ -172,9 +214,14 @@ function App() {
   }, [status.isRecording]);
 
   const actionLabel = useMemo(() => {
-    if (busy) return status.isRecording ? "正在生成视频…" : "请稍候…";
-    return status.isRecording ? "结束录制" : "开始录制";
-  }, [busy, status.isRecording]);
+    if (busy) return t.wait;
+    return status.isRecording ? t.stop : t.start;
+  }, [busy, status.isRecording, t]);
+
+  function changeLanguage(next: AppLanguage) {
+    setLanguage(next);
+    localStorage.setItem("focusflow.language", next);
+  }
 
   async function restoreWindow() {
     const appWindow = getCurrentWindow();
@@ -261,24 +308,12 @@ function App() {
 
   async function applyShortcut() {
     if (!capturedShortcut || status.isRecording) return;
-    const previous = shortcut;
-    try {
-      await unregister(previous).catch(() => undefined);
-      await register(capturedShortcut, (event) => {
-        if (event.state === "Pressed" && !shortcutDialogRef.current) void toggleRef.current();
-      });
-      setShortcut(capturedShortcut);
-      shortcutRef.current = capturedShortcut;
-      localStorage.setItem("focusflow.shortcut", capturedShortcut);
-      setMessage(`开始与结束快捷键已设为 ${capturedShortcut}`);
-      setShortcutDialogOpen(false);
-      setCapturedShortcut(null);
-    } catch (error) {
-      await register(previous, (event) => {
-        if (event.state === "Pressed" && !shortcutDialogRef.current) void toggleRef.current();
-      }).catch(() => undefined);
-      setMessage(`快捷键设置失败：${String(error)}`);
-    }
+    setShortcut(capturedShortcut);
+    shortcutRef.current = capturedShortcut;
+    localStorage.setItem("focusflow.shortcut", capturedShortcut);
+    setMessage(`开始与结束快捷键已设为 ${capturedShortcut}`);
+    setShortcutDialogOpen(false);
+    setCapturedShortcut(null);
   }
 
   function changeDisplay(id: string) {
@@ -316,75 +351,80 @@ function App() {
 
   return (
     <main className="shell">
-      <section className="app-frame">
-        <header className="topbar">
-          <div className="brand">
-            <span className="brand-mark"><i /></span>
-            <div><strong>FocusFlow</strong><small>Automatic camera recorder</small></div>
+      <section className="app-frame product-shell">
+        <aside className="side-rail">
+          <button className={`rail-brand ${activePage === "record" ? "active" : ""}`} type="button" aria-label={t.record} onClick={() => setActivePage("record")}><span className="brand-mark"><i /></span></button>
+          <nav className="rail-navigation" aria-label="FocusFlow">
+            {(["settings", "language", "update"] as AppPage[]).map((page) => (
+              <button key={page} type="button" className={`rail-button ${activePage === page ? "active" : ""}`} title={t[page]} aria-label={t[page]} aria-current={activePage === page ? "page" : undefined} onClick={() => setActivePage(page)}><Glyph name={page} /><span>{t[page]}</span></button>
+            ))}
+          </nav>
+          <span className="rail-version">v{APP_VERSION}</span>
+        </aside>
+
+        <section className="app-main">
+          <header className="main-header">
+            <div className="brand-copy"><strong>FocusFlow</strong><small>AUTOMATIC CAMERA RECORDER</small></div>
+            <span className="alpha-badge">ALPHA</span>
+            <div className={`status-pill ${status.isRecording ? "live" : busy ? "working" : "ready"}`}><span />{status.isRecording ? t.recording : busy ? t.working : t.ready}</div>
+          </header>
+
+          <div className="page-stage">
+            {activePage === "record" && (
+              <section className="hero record-page">
+                <div className="hero-ambient one" /><div className="hero-ambient two" />
+                <p className="eyebrow"><i /> {t.eyebrow.toUpperCase()}</p>
+                <h1>{status.isRecording ? <>{t.liveTitle}<em>{t.liveAccent}</em></> : <>{t.idleTitle}<em>{t.idleAccent}</em></>}</h1>
+                <p className="hero-subtitle">{t.subtitle}</p>
+                <p className="message"><span />{message}</p>
+                <div className={`record-console ${status.isRecording ? "is-recording" : ""}`}>
+                  <div className="capture-main">
+                    <div className="timer-block"><span className="timer-label">{status.isRecording ? "RECORDING" : "DURATION"}</span><strong className="timer"><i />{formatElapsed(elapsed)}</strong></div>
+                    <button type="button" className="primary-button record-action" disabled={busy || (!status.ffmpegAvailable && !status.isRecording)} onClick={() => void toggleRecording()}><span className="record-glyph">{status.isRecording ? "■" : ""}</span>{actionLabel}</button>
+                  </div>
+                  <div className="capture-foot"><span><kbd>{shortcut}</kbd> {t.shortcutHint}</span><span>{selectedDisplay ? selectedDisplay.label : t.detecting}</span></div>
+                </div>
+                <div className="outcome-slot">
+                  {busy && processing && <section className="processing-card" aria-live="polite"><div className="processing-copy"><span className="spinner" /><div><strong>{processing.message}</strong><span>{t.processingLocal}</span></div><b>{processing.progress}%</b></div><div className="progress-track"><i style={{ width: `${processing.progress}%` }} /></div></section>}
+                  {!busy && failure && <section className="failure-card" role="alert"><div><strong>{t.failed}</strong><span>{failure}</span></div><button type="button" className="secondary-button" onClick={() => void revealOutput()}>{t.savedFiles}</button></section>}
+                  {!busy && !failure && status.finalVideoPath && <section className="success-card"><div className="success-icon">✓</div><div className="success-copy"><strong>{t.finalReady}</strong><span title={status.finalVideoPath}>{fileName(status.finalVideoPath)}</span></div><div className="result-actions"><button type="button" className="secondary-button" onClick={() => void revealOutput()}>{t.openFolder}</button><button type="button" className="primary-button compact" onClick={() => void openFinalVideo()}>▶ {t.playFinal}</button><button type="button" className="secondary-button" onClick={() => void openSourceVideo()}>{t.playSource}</button></div></section>}
+                  {!busy && !failure && !status.finalVideoPath && <div className="promise-row"><span>∞ {t.unlimited}</span><span>◇ {t.watermark}</span><span>⌁ {t.autoZoom}</span></div>}
+                </div>
+              </section>
+            )}
+
+            {activePage === "settings" && (
+              <section className="content-page">
+                <div className="page-heading"><span className="section-kicker">01 / RECORDING</span><h1>{t.settings}</h1><p>{t.settingsLead}</p></div>
+                <div className="settings-panel">
+                  <div className="setting-row"><span className="setting-index">01</span><div className="setting-copy"><strong>{t.saveLocation}</strong><span title={status.outputDirectory}>{status.outputDirectory || "—"}</span></div><button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => void chooseOutputDirectory()}>{t.choose}</button></div>
+                  <div className="setting-row"><span className="setting-index">02</span><div className="setting-copy"><strong>{t.display}</strong><span>{t.displayHelp}</span></div><select className="display-select" value={selectedDisplayId} disabled={status.isRecording || busy} onChange={(event) => changeDisplay(event.target.value)}>{displays.map((display) => <option key={display.id} value={display.id}>{display.label}</option>)}</select></div>
+                  <div className="setting-row"><span className="setting-index">03</span><div className="setting-copy"><strong>{t.shortcut}</strong><span>{t.shortcutHelp}</span></div><div className="shortcut-control"><kbd>{shortcut}</kbd><button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => { setCapturedShortcut(null); setShortcutDialogOpen(true); }}>{t.change}</button></div></div>
+                  <div className="privacy-note"><span>⌾</span><div><strong>{t.privacy}</strong><small>{t.privacyHelp}</small></div></div>
+                </div>
+              </section>
+            )}
+
+            {activePage === "language" && (
+              <section className="content-page">
+                <div className="page-heading"><span className="section-kicker">02 / LANGUAGE</span><h1>{t.language}</h1><p>{t.languageLead}</p></div>
+                <div className="language-grid">
+                  {([{ id: "system", name: t.followSystem, meta: navigator.language }, { id: "zh", name: "中文", meta: "简体中文" }, { id: "en", name: "English", meta: "English" }, { id: "ja", name: "日本語", meta: "Japanese" }, { id: "fr", name: "Français", meta: "French" }] as { id: AppLanguage; name: string; meta: string }[]).map((option) => <button key={option.id} type="button" className={`language-option ${language === option.id ? "active" : ""}`} onClick={() => changeLanguage(option.id)}><span><strong>{option.name}</strong><small>{option.meta}</small></span><i>{language === option.id ? "✓" : ""}</i></button>)}
+                </div>
+              </section>
+            )}
+
+            {activePage === "update" && (
+              <section className="content-page">
+                <div className="page-heading"><span className="section-kicker">03 / UPDATE</span><h1>{t.update}</h1><p>{t.updateLead}</p></div>
+                <div className="version-card"><div className="version-icon"><Glyph name="update" /></div><div><span>{t.currentVersion}</span><strong>FocusFlow v{APP_VERSION}</strong><small>{t.latestLocal}</small></div><b>{t.current}</b></div>
+                <p className="coming-soon"><span />{t.updateSoon}</p>
+              </section>
+            )}
           </div>
-          <span className="alpha-badge">ALPHA</span>
-          <div className={`status-pill ${status.isRecording ? "live" : busy ? "working" : "ready"}`}><span />{status.isRecording ? "正在录制" : busy ? "正在处理" : "可以开始"}</div>
-        </header>
 
-        <div className="workspace">
-          <section className="hero">
-            <div className="hero-ambient one" /><div className="hero-ambient two" />
-            <p className="eyebrow"><i /> AUTOMATIC CAMERA RECORDER</p>
-            <h1>{status.isRecording ? <>正在录制，<em>专注演示就好。</em></> : <>按下录制，<em>镜头交给 FocusFlow。</em></>}</h1>
-            <p className="hero-subtitle">录制你的操作，自动生成平滑缩放与跟随镜头。</p>
-            <p className="message"><span />{message}</p>
-            <div className={`record-console ${status.isRecording ? "is-recording" : ""}`}>
-              <div className="capture-main">
-                <div className="timer-block"><span className="timer-label">{status.isRecording ? "RECORDING" : "DURATION"}</span><strong className="timer"><i />{formatElapsed(elapsed)}</strong></div>
-                <button type="button" className="primary-button record-action" disabled={busy || (!status.ffmpegAvailable && !status.isRecording)} onClick={() => void toggleRecording()}><span className="record-glyph">{status.isRecording ? "■" : ""}</span>{actionLabel}</button>
-              </div>
-              <div className="capture-foot"><span><kbd>{shortcut}</kbd> 随时开始或结束</span><span>{selectedDisplay ? selectedDisplay.label : "正在检测显示器"}</span></div>
-            </div>
-            <div className="outcome-slot">
-              {busy && processing && (
-                <section className="processing-card" aria-live="polite">
-                  <div className="processing-copy"><span className="spinner" /><div><strong>{processing.message}</strong><span>正在本机完成处理，请保持 FocusFlow 运行</span></div><b>{processing.progress}%</b></div>
-                  <div className="progress-track"><i style={{ width: `${processing.progress}%` }} /></div>
-                </section>
-              )}
-              {!busy && failure && (
-                <section className="failure-card" role="alert">
-                  <div><strong>这次成片没有顺利生成</strong><span>{failure}</span></div>
-                  <button type="button" className="secondary-button" onClick={() => void revealOutput()}>查看已保存文件</button>
-                </section>
-              )}
-              {!busy && !failure && status.finalVideoPath && (
-                <section className="success-card">
-                  <div className="success-icon">✓</div>
-                  <div className="success-copy"><strong>成片已准备好</strong><span title={status.finalVideoPath}>{fileName(status.finalVideoPath)}</span></div>
-                  <div className="result-actions"><button type="button" className="secondary-button" onClick={() => void revealOutput()}>打开文件夹</button><button type="button" className="primary-button compact" onClick={() => void openFinalVideo()}>▶ 播放最终视频</button><button type="button" className="secondary-button" onClick={() => void openSourceVideo()}>播放原始视频</button></div>
-                </section>
-              )}
-              {!busy && !failure && !status.finalVideoPath && <div className="promise-row"><span>∞ 不限时长</span><span>◇ 无水印 MP4</span><span>⌁ 自动缩放跟随</span></div>}
-            </div>
-          </section>
-
-          <aside className="settings">
-            <div className="settings-heading"><div><span>录制设置</span><small>确认以下三项，即可开始</small></div><b>3</b></div>
-            <div className="setting-row">
-              <span className="setting-index">01</span><div className="setting-copy"><strong>保存位置</strong><span title={status.outputDirectory}>{status.outputDirectory || "尚未设置"}</span></div>
-              <button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => void chooseOutputDirectory()}>选择</button>
-            </div>
-            <div className="setting-row">
-              <span className="setting-index">02</span><div className="setting-copy"><strong>录制显示器</strong><span>只捕获选择的这一块屏幕</span></div>
-              <select className="display-select" value={selectedDisplayId} disabled={status.isRecording || busy} onChange={(event) => changeDisplay(event.target.value)}>
-                {displays.map((display) => <option key={display.id} value={display.id}>{display.label}</option>)}
-              </select>
-            </div>
-            <div className="setting-row">
-              <span className="setting-index">03</span><div className="setting-copy"><strong>全局快捷键</strong><span>同一个按键开始与结束</span></div>
-              <div className="shortcut-control"><kbd>{shortcut}</kbd><button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => { setCapturedShortcut(null); setShortcutDialogOpen(true); }}>更改</button></div>
-            </div>
-            <div className="privacy-note"><span>⌾</span><div><strong>本机私密处理</strong><small>画面与鼠标数据不会上传</small></div></div>
-          </aside>
-        </div>
-
-        <footer><span>FocusFlow Alpha · Built for Windows</span><div><span>LOCAL PROCESSING</span><i /> <span>H.264 MP4</span><i /> <span>NO WATERMARK</span></div></footer>
+          <footer><span>FocusFlow Alpha · Built for Windows</span><div><span>LOCAL PROCESSING</span><i /> <span>H.264 MP4</span><i /> <span>NO WATERMARK</span></div></footer>
+        </section>
       </section>
 
       {shortcutDialogOpen && (

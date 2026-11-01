@@ -8,6 +8,8 @@ FocusFlow is a focused Windows screen recorder. It records the screen and mouse 
 
 The current product has one workflow: choose a display, save folder, and start/stop shortcut; record for as long as needed; then follow the local processing stages and play either the automatically directed video or the untouched source recording.
 
+FocusFlow 0.2 introduces a recording-first workspace with a compact left navigation rail. The recording canvas owns the main area, while dedicated pages provide recording settings, interface language, and installed-version information. The active navigation item is visibly enlarged with a blue focus border.
+
 ![FocusFlow Alpha recording interface](docs/assets/focusflow-alpha.png)
 
 ## Download
@@ -57,6 +59,9 @@ cargo check --workspace
 - A clean output folder containing only the original and final MP4 after successful processing.
 - A responsive interface that fills the available window when maximized.
 - A branded FocusFlow icon for the app window, executable, and installer.
+- A left navigation rail with dedicated Recording Settings, Language, and Updates pages.
+- Interface language choices for Follow System, Chinese, English, Japanese, and French.
+- The default `F8` global shortcut works immediately on first launch without being saved again.
 - Recoverable error feedback that keeps the saved source recording accessible.
 
 Manual timelines, project opening, clip editing, camera keyframes, and director-style settings are outside the current product.
