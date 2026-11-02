@@ -24,6 +24,7 @@ pub enum MouseEventKind {
     RightDown,
     RightUp,
     RightClick,
+    KeyActivity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -50,6 +51,7 @@ pub enum FocusReason {
     Dwell,
     Click,
     Drag,
+    Typing,
     Transition,
 }
 

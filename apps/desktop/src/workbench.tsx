@@ -51,6 +51,8 @@ function mediaUrl(path: string) {
 
 const REASON_LABEL: Record<FocusReason, string> = {
   click: "点击聚焦",
+  drag: "拖拽跟随",
+  typing: "输入保持",
   dwell: "停留聚焦",
   transition: "镜头移动",
   full_frame: "全屏",

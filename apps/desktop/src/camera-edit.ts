@@ -2,7 +2,13 @@
 // Keep keyframesFromTimeline / samplePose aligned with crates/editor_core.
 
 export type CameraEasing = "linear" | "ease_in_out_cubic";
-export type FocusReason = "full_frame" | "dwell" | "click" | "transition";
+export type FocusReason =
+  | "full_frame"
+  | "dwell"
+  | "click"
+  | "drag"
+  | "typing"
+  | "transition";
 
 export type CameraPose = {
   center: { x: number; y: number };

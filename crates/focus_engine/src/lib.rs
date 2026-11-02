@@ -38,9 +38,11 @@ impl DirectorProfile {
                 exit_duration_ms: 560,
                 click_hold_ms: 950,
                 drag_hold_ms: 500,
+                typing_hold_ms: 900,
                 dwell_zoom: 1.30,
                 click_zoom: 1.45,
                 drag_zoom: 1.32,
+                typing_zoom: 1.32,
                 merge_window_ms: 420,
                 merge_distance: 0.05,
                 direct_transition_gap_ms: 850,
@@ -55,9 +57,11 @@ impl DirectorProfile {
                 exit_duration_ms: 950,
                 click_hold_ms: 1_300,
                 drag_hold_ms: 850,
+                typing_hold_ms: 1_250,
                 dwell_zoom: 1.16,
                 click_zoom: 1.25,
                 drag_zoom: 1.18,
+                typing_zoom: 1.16,
                 merge_window_ms: 700,
                 merge_distance: 0.08,
                 direct_transition_gap_ms: 1_300,
@@ -77,9 +81,11 @@ pub struct FocusConfig {
     pub exit_duration_ms: u64,
     pub click_hold_ms: u64,
     pub drag_hold_ms: u64,
+    pub typing_hold_ms: u64,
     pub dwell_zoom: f64,
     pub click_zoom: f64,
     pub drag_zoom: f64,
+    pub typing_zoom: f64,
     pub merge_window_ms: u64,
     pub merge_distance: f64,
     pub direct_transition_gap_ms: u64,
@@ -97,9 +103,11 @@ impl Default for FocusConfig {
             exit_duration_ms: 700,
             click_hold_ms: 1_100,
             drag_hold_ms: 650,
+            typing_hold_ms: 1_050,
             dwell_zoom: 1.24,
             click_zoom: 1.34,
             drag_zoom: 1.25,
+            typing_zoom: 1.24,
             merge_window_ms: 500,
             merge_distance: 0.06,
             direct_transition_gap_ms: 1_000,
@@ -160,6 +168,7 @@ impl FocusEngine for SmartFocusEngine {
         let drags = drag_gestures(events);
         let mut cues = self.click_cues(events, &drags);
         cues.extend(self.drag_cues(&drags));
+        cues.extend(self.typing_cues(events));
         cues.extend(self.dwell_cues(events));
         cues.retain(|cue| cue.time_ms < duration_ms);
         cues.sort_by_key(|cue| cue.time_ms);
@@ -256,6 +265,50 @@ impl SmartFocusEngine {
                 [start, end]
             })
             .collect()
+    }
+
+    fn typing_cues(&self, events: &[MouseEvent]) -> Vec<Cue> {
+        let mut latest_click: Option<MouseEvent> = None;
+        let mut active_anchor: Option<MouseEvent> = None;
+        let mut last_activity_ms: Option<u64> = None;
+        let mut cues = Vec::new();
+
+        for event in events {
+            if matches!(
+                event.kind,
+                MouseEventKind::LeftClick | MouseEventKind::RightClick
+            ) {
+                latest_click = Some(*event);
+                active_anchor = None;
+                last_activity_ms = None;
+                continue;
+            }
+            if event.kind != MouseEventKind::KeyActivity {
+                continue;
+            }
+
+            let continues_burst = last_activity_ms
+                .is_some_and(|last| event.time_ms.saturating_sub(last) <= 1_000);
+            if !continues_burst {
+                active_anchor = latest_click
+                    .filter(|click| event.time_ms.saturating_sub(click.time_ms) <= 2_500);
+            }
+            let Some(anchor) = active_anchor else {
+                last_activity_ms = Some(event.time_ms);
+                continue;
+            };
+            cues.push(Cue {
+                time_ms: event.time_ms,
+                hold_until_ms: event.time_ms.saturating_add(self.config.typing_hold_ms),
+                pose: CameraPose {
+                    center: constrained_center(anchor.position, self.config.typing_zoom),
+                    zoom: self.config.typing_zoom,
+                },
+                reason: FocusReason::Typing,
+            });
+            last_activity_ms = Some(event.time_ms);
+        }
+        cues
     }
 
     fn dwell_cues(&self, events: &[MouseEvent]) -> Vec<Cue> {
@@ -577,6 +630,7 @@ impl TraceLine {
             "left_up" => MouseEventKind::LeftUp,
             "right_down" => MouseEventKind::RightDown,
             "right_up" => MouseEventKind::RightUp,
+            "key_activity" => MouseEventKind::KeyActivity,
             _ => return Err(format!("轨迹第 {line_number} 行包含未知事件：{event}")),
         };
         Ok(MouseEvent {
@@ -786,6 +840,53 @@ mod tests {
             .segments
             .iter()
             .any(|segment| segment.reason == FocusReason::Drag));
+    }
+
+    #[test]
+    fn typing_after_click_keeps_the_clicked_area_focused() {
+        let events = vec![
+            mouse(1_000, 0.35, 0.45, 0.0, MouseEventKind::LeftClick),
+            mouse(1_700, 0.35, 0.45, 0.0, MouseEventKind::KeyActivity),
+            mouse(2_400, 0.35, 0.45, 0.0, MouseEventKind::KeyActivity),
+            mouse(3_100, 0.35, 0.45, 0.0, MouseEventKind::KeyActivity),
+        ];
+        let timeline = SmartFocusEngine::default().analyze(5_000, &events).unwrap();
+        let restore = timeline
+            .segments
+            .iter()
+            .find(|segment| segment.from.zoom > 1.0 && segment.to.zoom == 1.0)
+            .expect("typing sequence should eventually restore full frame");
+        assert!(restore.start_ms >= 4_000);
+
+        let click_only = SmartFocusEngine::default()
+            .analyze(
+                5_000,
+                &[mouse(
+                    1_000,
+                    0.35,
+                    0.45,
+                    0.0,
+                    MouseEventKind::LeftClick,
+                )],
+            )
+            .unwrap();
+        let click_only_restore = click_only
+            .segments
+            .iter()
+            .find(|segment| segment.from.zoom > 1.0 && segment.to.zoom == 1.0)
+            .expect("click should eventually restore full frame");
+        assert!(restore.start_ms > click_only_restore.start_ms);
+    }
+
+    #[test]
+    fn anonymous_key_activity_without_a_recent_click_does_not_guess_a_target() {
+        let events = vec![
+            mouse(1_000, 0.50, 0.50, 0.0, MouseEventKind::KeyActivity),
+            mouse(1_500, 0.50, 0.50, 0.0, MouseEventKind::KeyActivity),
+        ];
+        let timeline = SmartFocusEngine::default().analyze(3_000, &events).unwrap();
+
+        assert!(timeline.segments.is_empty());
     }
 
     #[test]

@@ -20,6 +20,8 @@ use windows::Win32::{
 };
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(16);
+const KEYBOARD_SAMPLE_INTERVAL: Duration = Duration::from_millis(48);
+const KEY_ACTIVITY_DEBOUNCE: Duration = Duration::from_millis(120);
 
 #[derive(Serialize)]
 struct TraceMetadata {
@@ -124,7 +126,7 @@ fn track_mouse(
         &mut writer,
         &TraceMetadata {
             line_type: "metadata",
-            schema_version: 2,
+            schema_version: 3,
             origin_x: bounds.x,
             origin_y: bounds.y,
             width: bounds.width,
@@ -137,6 +139,9 @@ fn track_mouse(
     let mut previous_time = origin;
     let mut left_was_down = button_is_down(VK_LBUTTON);
     let mut right_was_down = button_is_down(VK_RBUTTON);
+    let mut keyboard_state = current_keyboard_state();
+    let mut last_keyboard_sample = origin;
+    let mut last_key_activity: Option<Instant> = None;
     write_event(
         &mut writer,
         bounds,
@@ -201,6 +206,25 @@ fn track_mouse(
         if right_released {
             write_event(&mut writer, bounds, origin, point, speed, false, "right_up")?;
         }
+        if now.duration_since(last_keyboard_sample) >= KEYBOARD_SAMPLE_INTERVAL {
+            let (next_keyboard_state, key_pressed) = keyboard_activity(&keyboard_state);
+            keyboard_state = next_keyboard_state;
+            last_keyboard_sample = now;
+            let debounce_elapsed = last_key_activity
+                .is_none_or(|last| now.duration_since(last) >= KEY_ACTIVITY_DEBOUNCE);
+            if key_pressed && debounce_elapsed {
+                write_event(
+                    &mut writer,
+                    bounds,
+                    origin,
+                    point,
+                    speed,
+                    false,
+                    "key_activity",
+                )?;
+                last_key_activity = Some(now);
+            }
+        }
 
         previous_point = point;
         previous_time = now;
@@ -230,6 +254,25 @@ fn cursor_position() -> Result<POINT, String> {
 fn button_is_down(button: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY) -> bool {
     // SAFETY: GetAsyncKeyState accepts any virtual-key code and has no pointer parameters.
     unsafe { GetAsyncKeyState(i32::from(button.0)) < 0 }
+}
+
+fn current_keyboard_state() -> [bool; 256] {
+    let mut state = [false; 256];
+    for key in 8_u16..=254 {
+        state[usize::from(key)] = key_is_down(key);
+    }
+    state
+}
+
+fn keyboard_activity(previous: &[bool; 256]) -> ([bool; 256], bool) {
+    let current = current_keyboard_state();
+    let pressed = (8_usize..=254).any(|key| current[key] && !previous[key]);
+    (current, pressed)
+}
+
+fn key_is_down(key: u16) -> bool {
+    // SAFETY: GetAsyncKeyState accepts any virtual-key code and has no pointer parameters.
+    unsafe { GetAsyncKeyState(i32::from(key)) < 0 }
 }
 
 fn write_event(
