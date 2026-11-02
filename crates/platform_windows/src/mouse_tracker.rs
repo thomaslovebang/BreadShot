@@ -124,7 +124,7 @@ fn track_mouse(
         &mut writer,
         &TraceMetadata {
             line_type: "metadata",
-            schema_version: 1,
+            schema_version: 2,
             origin_x: bounds.x,
             origin_y: bounds.y,
             width: bounds.width,
@@ -162,14 +162,17 @@ fn track_mouse(
 
         let left_down = button_is_down(VK_LBUTTON);
         let right_down = button_is_down(VK_RBUTTON);
-        let left_clicked = left_down && !left_was_down;
-        let right_clicked = right_down && !right_was_down;
+        let left_pressed = left_down && !left_was_down;
+        let left_released = !left_down && left_was_down;
+        let right_pressed = right_down && !right_was_down;
+        let right_released = !right_down && right_was_down;
         let moved = point != previous_point;
 
         if moved {
             write_event(&mut writer, bounds, origin, point, speed, false, "move")?;
         }
-        if left_clicked {
+        if left_pressed {
+            write_event(&mut writer, bounds, origin, point, speed, false, "left_down")?;
             write_event(
                 &mut writer,
                 bounds,
@@ -180,7 +183,11 @@ fn track_mouse(
                 "left_click",
             )?;
         }
-        if right_clicked {
+        if left_released {
+            write_event(&mut writer, bounds, origin, point, speed, false, "left_up")?;
+        }
+        if right_pressed {
+            write_event(&mut writer, bounds, origin, point, speed, false, "right_down")?;
             write_event(
                 &mut writer,
                 bounds,
@@ -190,6 +197,9 @@ fn track_mouse(
                 true,
                 "right_click",
             )?;
+        }
+        if right_released {
+            write_event(&mut writer, bounds, origin, point, speed, false, "right_up")?;
         }
 
         previous_point = point;

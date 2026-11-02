@@ -17,6 +17,7 @@ const FAST_CLICK_LOOKBACK_MS: u64 = 100;
 const FAST_CLICK_RECENT_MS: u64 = 40;
 const FAST_CLICK_LOOKBACK_DISTANCE: f64 = 0.06;
 const FAST_CLICK_RECENT_DISTANCE: f64 = 0.02;
+const DRAG_MIN_DISTANCE: f64 = 0.025;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,8 +37,10 @@ impl DirectorProfile {
                 enter_duration_ms: 420,
                 exit_duration_ms: 560,
                 click_hold_ms: 950,
+                drag_hold_ms: 500,
                 dwell_zoom: 1.30,
                 click_zoom: 1.45,
+                drag_zoom: 1.32,
                 merge_window_ms: 420,
                 merge_distance: 0.05,
                 direct_transition_gap_ms: 850,
@@ -51,8 +54,10 @@ impl DirectorProfile {
                 enter_duration_ms: 780,
                 exit_duration_ms: 950,
                 click_hold_ms: 1_300,
+                drag_hold_ms: 850,
                 dwell_zoom: 1.16,
                 click_zoom: 1.25,
+                drag_zoom: 1.18,
                 merge_window_ms: 700,
                 merge_distance: 0.08,
                 direct_transition_gap_ms: 1_300,
@@ -71,8 +76,10 @@ pub struct FocusConfig {
     pub enter_duration_ms: u64,
     pub exit_duration_ms: u64,
     pub click_hold_ms: u64,
+    pub drag_hold_ms: u64,
     pub dwell_zoom: f64,
     pub click_zoom: f64,
+    pub drag_zoom: f64,
     pub merge_window_ms: u64,
     pub merge_distance: f64,
     pub direct_transition_gap_ms: u64,
@@ -89,8 +96,10 @@ impl Default for FocusConfig {
             enter_duration_ms: 550,
             exit_duration_ms: 700,
             click_hold_ms: 1_100,
+            drag_hold_ms: 650,
             dwell_zoom: 1.24,
             click_zoom: 1.34,
+            drag_zoom: 1.25,
             merge_window_ms: 500,
             merge_distance: 0.06,
             direct_transition_gap_ms: 1_000,
@@ -148,7 +157,9 @@ impl FocusEngine for SmartFocusEngine {
             });
         }
 
-        let mut cues = self.click_cues(events);
+        let drags = drag_gestures(events);
+        let mut cues = self.click_cues(events, &drags);
+        cues.extend(self.drag_cues(&drags));
         cues.extend(self.dwell_cues(events));
         cues.retain(|cue| cue.time_ms < duration_ms);
         cues.sort_by_key(|cue| cue.time_ms);
@@ -192,7 +203,7 @@ impl SmartFocusEngine {
         self.analyze(duration_ms, &events)
     }
 
-    fn click_cues(&self, events: &[MouseEvent]) -> Vec<Cue> {
+    fn click_cues(&self, events: &[MouseEvent], drags: &[DragGesture]) -> Vec<Cue> {
         events
             .iter()
             .enumerate()
@@ -201,6 +212,11 @@ impl SmartFocusEngine {
                     event.kind,
                     MouseEventKind::LeftClick | MouseEventKind::RightClick
                 )
+            })
+            .filter(|(_, event)| {
+                !drags.iter().any(|drag| {
+                    event.time_ms >= drag.start.time_ms && event.time_ms <= drag.end.time_ms
+                })
             })
             .filter(|(index, _)| !click_during_fast_movement(events, *index))
             .map(|(_, event)| Cue {
@@ -211,6 +227,33 @@ impl SmartFocusEngine {
                     zoom: self.config.click_zoom,
                 },
                 reason: FocusReason::Click,
+            })
+            .collect()
+    }
+
+    fn drag_cues(&self, drags: &[DragGesture]) -> Vec<Cue> {
+        drags
+            .iter()
+            .flat_map(|drag| {
+                let start = Cue {
+                    time_ms: drag.start.time_ms,
+                    hold_until_ms: drag.end.time_ms,
+                    pose: CameraPose {
+                        center: constrained_center(drag.start.position, self.config.drag_zoom),
+                        zoom: self.config.drag_zoom,
+                    },
+                    reason: FocusReason::Drag,
+                };
+                let end = Cue {
+                    time_ms: drag.end.time_ms,
+                    hold_until_ms: drag.end.time_ms.saturating_add(self.config.drag_hold_ms),
+                    pose: CameraPose {
+                        center: constrained_center(drag.end.position, self.config.drag_zoom),
+                        zoom: self.config.drag_zoom,
+                    },
+                    reason: FocusReason::Drag,
+                };
+                [start, end]
             })
             .collect()
     }
@@ -257,7 +300,7 @@ impl SmartFocusEngine {
                         .saturating_add(self.config.direct_transition_gap_ms);
                 if close_in_space && (close_in_time || continues_active_focus) {
                     previous.hold_until_ms = previous.hold_until_ms.max(cue.hold_until_ms);
-                    if cue.reason == FocusReason::Click {
+                    if matches!(cue.reason, FocusReason::Click | FocusReason::Drag) {
                         previous.pose = cue.pose;
                         previous.reason = cue.reason;
                     }
@@ -452,6 +495,31 @@ fn click_during_fast_movement(events: &[MouseEvent], click_index: usize) -> bool
         && recent_distance >= FAST_CLICK_RECENT_DISTANCE
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DragGesture {
+    start: MouseEvent,
+    end: MouseEvent,
+}
+
+fn drag_gestures(events: &[MouseEvent]) -> Vec<DragGesture> {
+    let mut active_left: Option<MouseEvent> = None;
+    let mut gestures = Vec::new();
+    for event in events {
+        match event.kind {
+            MouseEventKind::LeftDown => active_left = Some(*event),
+            MouseEventKind::LeftUp => {
+                if let Some(start) = active_left.take()
+                    && distance(start.position, event.position) >= DRAG_MIN_DISTANCE
+                {
+                    gestures.push(DragGesture { start, end: *event });
+                }
+            }
+            _ => {}
+        }
+    }
+    gestures
+}
+
 fn movement_distance_before(
     events: &[MouseEvent],
     click_index: usize,
@@ -505,6 +573,10 @@ impl TraceLine {
             "move" => MouseEventKind::Move,
             "left_click" => MouseEventKind::LeftClick,
             "right_click" => MouseEventKind::RightClick,
+            "left_down" => MouseEventKind::LeftDown,
+            "left_up" => MouseEventKind::LeftUp,
+            "right_down" => MouseEventKind::RightDown,
+            "right_up" => MouseEventKind::RightUp,
             _ => return Err(format!("轨迹第 {line_number} 行包含未知事件：{event}")),
         };
         Ok(MouseEvent {
@@ -667,6 +739,53 @@ mod tests {
     fn click_without_enough_motion_history_is_preserved() {
         let events = vec![mouse(1_000, 0.60, 0.50, 0.0, MouseEventKind::LeftClick)];
         assert!(has_click_focus(&events));
+    }
+
+    #[test]
+    fn drag_pans_camera_from_press_to_release_without_click_zoom() {
+        let events = vec![
+            mouse(1_000, 0.25, 0.45, 0.0, MouseEventKind::LeftDown),
+            mouse(1_000, 0.25, 0.45, 0.0, MouseEventKind::LeftClick),
+            mouse(1_350, 0.50, 0.50, 500.0, MouseEventKind::Move),
+            mouse(1_700, 0.75, 0.55, 0.0, MouseEventKind::LeftUp),
+        ];
+        let timeline = SmartFocusEngine::default().analyze(4_000, &events).unwrap();
+
+        assert!(
+            timeline
+                .segments
+                .iter()
+                .any(|segment| segment.reason == FocusReason::Drag)
+        );
+        assert!(timeline
+            .segments
+            .iter()
+            .any(|segment| segment.from.zoom > 1.0
+                && segment.to.zoom > 1.0
+                && segment.from.center != segment.to.center));
+        assert!(!timeline
+            .segments
+            .iter()
+            .any(|segment| segment.reason == FocusReason::Click));
+    }
+
+    #[test]
+    fn tiny_press_release_movement_remains_a_click() {
+        let events = vec![
+            mouse(1_000, 0.50, 0.50, 0.0, MouseEventKind::LeftDown),
+            mouse(1_000, 0.50, 0.50, 0.0, MouseEventKind::LeftClick),
+            mouse(1_080, 0.51, 0.50, 0.0, MouseEventKind::LeftUp),
+        ];
+        let timeline = SmartFocusEngine::default().analyze(3_000, &events).unwrap();
+
+        assert!(timeline
+            .segments
+            .iter()
+            .any(|segment| segment.reason == FocusReason::Click));
+        assert!(!timeline
+            .segments
+            .iter()
+            .any(|segment| segment.reason == FocusReason::Drag));
     }
 
     #[test]

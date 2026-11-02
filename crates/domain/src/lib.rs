@@ -49,6 +49,7 @@ pub enum FocusReason {
     FullFrame,
     Dwell,
     Click,
+    Drag,
     Transition,
 }
 
