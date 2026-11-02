@@ -113,6 +113,8 @@ BreadShot is early, opinionated, and open source. The most valuable contribution
 
 Before opening a feature request, keep the product rule in mind: **record once, edit less, publish faster**.
 
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, required checks, privacy rules, and the pull-request workflow. Community participation follows our [Code of Conduct](CODE_OF_CONDUCT.md), and vulnerabilities should use the private process in [SECURITY.md](SECURITY.md).
+
 ## License
 
 BreadShot is available under the [MIT License](LICENSE). Release installers bundle separate FFmpeg executables under GPLv3; see [third-party notices](THIRD_PARTY_NOTICES.md).

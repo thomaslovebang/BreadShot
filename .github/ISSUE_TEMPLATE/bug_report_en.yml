@@ -1,0 +1,67 @@
+name: Bug report (English)
+description: Report an installation, recording, automatic camera, audio, cursor, or export failure
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping make BreadShot reliable. Never upload a recording or trace containing private information.
+  - type: input
+    id: version
+    attributes:
+      label: BreadShot version
+      placeholder: For example, v0.3.1
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: For example, Windows 11 24H2
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Graphics and display setup
+      placeholder: For example, Intel laptop, NVIDIA RTX 4060, two displays at 125% scaling
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Failure stage
+      options:
+        - Install or launch
+        - Start recording
+        - Stop recording
+        - Audio capture
+        - Cursor rendering
+        - Automatic camera processing
+        - Final video playback
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the smallest sequence that reproduces the problem and the actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Sanitized diagnostics
+      description: Add exact error text or privacy-safe screenshots. Do not attach private recordings by default.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I confirmed that every attachment is free of passwords, personal data, proprietary content, and private communications.
+          required: true

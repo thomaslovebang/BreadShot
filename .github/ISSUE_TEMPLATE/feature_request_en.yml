@@ -1,0 +1,40 @@
+name: Product idea (English)
+description: Propose an improvement that supports BreadShot's zero-edit direction
+title: "[Idea] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: BreadShot prioritizes automatic output quality, recording reliability, time to publishable video, and trustworthy adoption. Please begin with the user problem.
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What were you trying to publish, and where did the current workflow fail?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or frequency
+      description: How often does this happen? Include privacy-safe examples or competing workflows when useful.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result rather than prescribing a large implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Which project metric improves most?
+      options:
+        - Automatic output quality
+        - Recording or export reliability
+        - Time to first publishable video
+        - Trustworthy open-source adoption
+    validations:
+      required: true
