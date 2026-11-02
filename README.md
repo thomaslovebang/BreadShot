@@ -16,8 +16,6 @@ FocusFlow 0.3.1 adds video-only cursor effects without changing Windows itself. 
 
 This release also suppresses automatic zoom when either mouse button is clicked while the pointer is still moving quickly, returns to the recording home page whenever recording ends, and substantially accelerates cursor compositing through frame-rate sampling, correct source-duration limits, and supported NVIDIA hardware encoding.
 
-![FocusFlow Alpha recording interface](docs/assets/focusflow-alpha.png)
-
 ## Download
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/thomaslovebang/FocusFlow9/releases/latest). The installer includes the video engine; users do not need to install FFmpeg, Node.js, or Rust.
