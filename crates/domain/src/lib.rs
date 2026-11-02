@@ -25,6 +25,10 @@ pub enum MouseEventKind {
     RightUp,
     RightClick,
     KeyActivity,
+    ScrollUp,
+    ScrollDown,
+    ScrollLeft,
+    ScrollRight,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -52,6 +56,7 @@ pub enum FocusReason {
     Click,
     Drag,
     Typing,
+    Scroll,
     Transition,
 }
 

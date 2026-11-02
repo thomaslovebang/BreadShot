@@ -13,7 +13,7 @@ This directory documents the versioned interaction benchmark used to develop Bre
 ## What v1 does not prove
 
 - Visual quality or user preference.
-- Semantic understanding of drag, scroll, typing, or UI changes.
+- End-to-end capture and rendered visual quality for drag, scroll, typing, or UI changes.
 - Real capture timing across different Windows hardware.
 - The roadmap's 18-of-20 publishability exit gate.
 

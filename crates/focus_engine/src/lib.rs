@@ -39,10 +39,12 @@ impl DirectorProfile {
                 click_hold_ms: 950,
                 drag_hold_ms: 500,
                 typing_hold_ms: 900,
+                scroll_hold_ms: 700,
                 dwell_zoom: 1.30,
                 click_zoom: 1.45,
                 drag_zoom: 1.32,
                 typing_zoom: 1.32,
+                scroll_zoom: 1.30,
                 merge_window_ms: 420,
                 merge_distance: 0.05,
                 direct_transition_gap_ms: 850,
@@ -58,10 +60,12 @@ impl DirectorProfile {
                 click_hold_ms: 1_300,
                 drag_hold_ms: 850,
                 typing_hold_ms: 1_250,
+                scroll_hold_ms: 1_000,
                 dwell_zoom: 1.16,
                 click_zoom: 1.25,
                 drag_zoom: 1.18,
                 typing_zoom: 1.16,
+                scroll_zoom: 1.15,
                 merge_window_ms: 700,
                 merge_distance: 0.08,
                 direct_transition_gap_ms: 1_300,
@@ -82,10 +86,12 @@ pub struct FocusConfig {
     pub click_hold_ms: u64,
     pub drag_hold_ms: u64,
     pub typing_hold_ms: u64,
+    pub scroll_hold_ms: u64,
     pub dwell_zoom: f64,
     pub click_zoom: f64,
     pub drag_zoom: f64,
     pub typing_zoom: f64,
+    pub scroll_zoom: f64,
     pub merge_window_ms: u64,
     pub merge_distance: f64,
     pub direct_transition_gap_ms: u64,
@@ -104,10 +110,12 @@ impl Default for FocusConfig {
             click_hold_ms: 1_100,
             drag_hold_ms: 650,
             typing_hold_ms: 1_050,
+            scroll_hold_ms: 850,
             dwell_zoom: 1.24,
             click_zoom: 1.34,
             drag_zoom: 1.25,
             typing_zoom: 1.24,
+            scroll_zoom: 1.22,
             merge_window_ms: 500,
             merge_distance: 0.06,
             direct_transition_gap_ms: 1_000,
@@ -169,6 +177,7 @@ impl FocusEngine for SmartFocusEngine {
         let mut cues = self.click_cues(events, &drags);
         cues.extend(self.drag_cues(&drags));
         cues.extend(self.typing_cues(events));
+        cues.extend(self.scroll_cues(events));
         cues.extend(self.dwell_cues(events));
         cues.retain(|cue| cue.time_ms < duration_ms);
         cues.sort_by_key(|cue| cue.time_ms);
@@ -307,6 +316,56 @@ impl SmartFocusEngine {
                 reason: FocusReason::Typing,
             });
             last_activity_ms = Some(event.time_ms);
+        }
+        cues
+    }
+
+    fn scroll_cues(&self, events: &[MouseEvent]) -> Vec<Cue> {
+        let mut latest_click: Option<MouseEvent> = None;
+        let mut active_anchor: Option<MouseEvent> = None;
+        let mut last_scroll_ms: Option<u64> = None;
+        let mut cues = Vec::new();
+
+        for event in events {
+            if matches!(
+                event.kind,
+                MouseEventKind::LeftClick | MouseEventKind::RightClick
+            ) {
+                latest_click = Some(*event);
+                active_anchor = None;
+                last_scroll_ms = None;
+                continue;
+            }
+            if !matches!(
+                event.kind,
+                MouseEventKind::ScrollUp
+                    | MouseEventKind::ScrollDown
+                    | MouseEventKind::ScrollLeft
+                    | MouseEventKind::ScrollRight
+            ) {
+                continue;
+            }
+
+            let continues_burst = last_scroll_ms
+                .is_some_and(|last| event.time_ms.saturating_sub(last) <= 750);
+            if !continues_burst {
+                active_anchor = latest_click
+                    .filter(|click| event.time_ms.saturating_sub(click.time_ms) <= 3_000);
+            }
+            let Some(anchor) = active_anchor else {
+                last_scroll_ms = Some(event.time_ms);
+                continue;
+            };
+            cues.push(Cue {
+                time_ms: event.time_ms,
+                hold_until_ms: event.time_ms.saturating_add(self.config.scroll_hold_ms),
+                pose: CameraPose {
+                    center: constrained_center(anchor.position, self.config.scroll_zoom),
+                    zoom: self.config.scroll_zoom,
+                },
+                reason: FocusReason::Scroll,
+            });
+            last_scroll_ms = Some(event.time_ms);
         }
         cues
     }
@@ -631,6 +690,10 @@ impl TraceLine {
             "right_down" => MouseEventKind::RightDown,
             "right_up" => MouseEventKind::RightUp,
             "key_activity" => MouseEventKind::KeyActivity,
+            "scroll_up" => MouseEventKind::ScrollUp,
+            "scroll_down" => MouseEventKind::ScrollDown,
+            "scroll_left" => MouseEventKind::ScrollLeft,
+            "scroll_right" => MouseEventKind::ScrollRight,
             _ => return Err(format!("轨迹第 {line_number} 行包含未知事件：{event}")),
         };
         Ok(MouseEvent {
@@ -883,6 +946,38 @@ mod tests {
         let events = vec![
             mouse(1_000, 0.50, 0.50, 0.0, MouseEventKind::KeyActivity),
             mouse(1_500, 0.50, 0.50, 0.0, MouseEventKind::KeyActivity),
+        ];
+        let timeline = SmartFocusEngine::default().analyze(3_000, &events).unwrap();
+
+        assert!(timeline.segments.is_empty());
+    }
+
+    #[test]
+    fn scrolling_after_click_extends_focus_without_retargeting() {
+        let events = vec![
+            mouse(1_000, 0.40, 0.45, 0.0, MouseEventKind::LeftClick),
+            mouse(1_600, 0.80, 0.80, 0.0, MouseEventKind::ScrollDown),
+            mouse(2_100, 0.80, 0.80, 0.0, MouseEventKind::ScrollDown),
+            mouse(2_600, 0.80, 0.80, 0.0, MouseEventKind::ScrollUp),
+        ];
+        let timeline = SmartFocusEngine::default().analyze(5_000, &events).unwrap();
+        let restore = timeline
+            .segments
+            .iter()
+            .find(|segment| segment.from.zoom > 1.0 && segment.to.zoom == 1.0)
+            .expect("scrolling sequence should eventually restore full frame");
+        assert!(restore.start_ms >= 3_400);
+        assert!(timeline.segments.iter().filter(|segment| {
+            segment.from.zoom == 1.0 && segment.to.zoom > 1.0
+        }).count() == 1);
+    }
+
+    #[test]
+    fn scrolling_without_a_recent_click_does_not_guess_a_target() {
+        let events = vec![
+            mouse(1_000, 0.95, 0.50, 0.0, MouseEventKind::ScrollDown),
+            mouse(1_300, 0.95, 0.50, 0.0, MouseEventKind::ScrollDown),
+            mouse(1_600, 0.95, 0.50, 0.0, MouseEventKind::ScrollDown),
         ];
         let timeline = SmartFocusEngine::default().analyze(3_000, &events).unwrap();
 

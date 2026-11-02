@@ -8,6 +8,7 @@ export type FocusReason =
   | "click"
   | "drag"
   | "typing"
+  | "scroll"
   | "transition";
 
 export type CameraPose = {
