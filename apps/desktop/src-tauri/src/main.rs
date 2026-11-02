@@ -18,6 +18,7 @@ use audio_capture::{AudioCaptureHandle, AudioDeviceInfo};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    env,
     fs::{self, File},
     io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
@@ -1183,8 +1184,30 @@ fn stop_active_recording(
     }
     recording.project.state = ProjectState::Ready;
     save_project(&recording.project_path, &recording.project)?;
+    export_benchmark_trace_if_requested(recording)?;
     remove_processing_artifacts(recording)?;
     emit_processing_progress(app, "complete", 100, "自动运镜视频已生成");
+    Ok(())
+}
+
+fn export_benchmark_trace_if_requested(recording: &ActiveRecording) -> Result<(), String> {
+    let Some(directory) = env::var_os("BREADSHOT_BENCHMARK_TRACE_DIR") else {
+        return Ok(());
+    };
+    let directory = PathBuf::from(directory);
+    fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "无法创建基准轨迹目录 {}：{error}",
+            directory.display()
+        )
+    })?;
+    let file_name = recording
+        .mouse_events_path
+        .file_name()
+        .ok_or_else(|| "无法读取基准轨迹文件名".to_string())?;
+    let target = directory.join(file_name);
+    fs::copy(&recording.mouse_events_path, &target)
+        .map_err(|error| format!("无法导出基准轨迹 {}：{error}", target.display()))?;
     Ok(())
 }
 

@@ -49,7 +49,7 @@ The generated timeline is deterministic: the same trace and profile always produ
 
 The engine has focused unit tests for false-positive suppression, double-click collapsing, drag pans, typing and scrolling anchors, confidence thresholds, profile differences, edge constraints, and timeline restoration.
 
-The versioned v1 benchmark adds 20 deterministic interaction scenarios. It protects structural behavior, but it is not yet proof of visual quality. The next evidence layer is a checked-in set of real JSONL traces, rendered reference clips, and human publishability review.
+The versioned v1 benchmark adds 20 deterministic interaction scenarios. It protects structural behavior, but it is not proof of visual quality. The real v2 evidence gate separately requires 20 captured JSONL traces, structural checks, rendered evidence, and at least 18 explicit human publishability approvals. Missing or unreviewed cases never count as passing.
 
 ## Current limits
 
