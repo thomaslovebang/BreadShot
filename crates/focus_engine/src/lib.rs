@@ -18,6 +18,9 @@ const FAST_CLICK_RECENT_MS: u64 = 40;
 const FAST_CLICK_LOOKBACK_DISTANCE: f64 = 0.06;
 const FAST_CLICK_RECENT_DISTANCE: f64 = 0.02;
 const DRAG_MIN_DISTANCE: f64 = 0.025;
+const DOUBLE_CLICK_MAX_GAP_MS: u64 = 500;
+const DOUBLE_CLICK_MAX_DISTANCE: f64 = 0.035;
+const DWELL_MAX_DISTANCE: f64 = 0.035;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,11 +40,13 @@ impl DirectorProfile {
                 enter_duration_ms: 420,
                 exit_duration_ms: 560,
                 click_hold_ms: 950,
+                double_click_hold_ms: 1_150,
                 drag_hold_ms: 500,
                 typing_hold_ms: 900,
                 scroll_hold_ms: 700,
                 dwell_zoom: 1.30,
                 click_zoom: 1.45,
+                double_click_zoom: 1.52,
                 drag_zoom: 1.32,
                 typing_zoom: 1.32,
                 scroll_zoom: 1.30,
@@ -52,17 +57,20 @@ impl DirectorProfile {
                 min_pan_duration_ms: 300,
                 max_pan_duration_ms: 680,
                 pan_duration_per_unit_ms: 1_700.0,
+                min_confidence: 0.58,
             },
             Self::Soft => FocusConfig {
                 dwell_threshold_ms: 900,
                 enter_duration_ms: 780,
                 exit_duration_ms: 950,
                 click_hold_ms: 1_300,
+                double_click_hold_ms: 1_450,
                 drag_hold_ms: 850,
                 typing_hold_ms: 1_250,
                 scroll_hold_ms: 1_000,
                 dwell_zoom: 1.16,
                 click_zoom: 1.25,
+                double_click_zoom: 1.30,
                 drag_zoom: 1.18,
                 typing_zoom: 1.16,
                 scroll_zoom: 1.15,
@@ -73,6 +81,7 @@ impl DirectorProfile {
                 min_pan_duration_ms: 550,
                 max_pan_duration_ms: 1_050,
                 pan_duration_per_unit_ms: 3_000.0,
+                min_confidence: 0.76,
             },
         }
     }
@@ -84,11 +93,13 @@ pub struct FocusConfig {
     pub enter_duration_ms: u64,
     pub exit_duration_ms: u64,
     pub click_hold_ms: u64,
+    pub double_click_hold_ms: u64,
     pub drag_hold_ms: u64,
     pub typing_hold_ms: u64,
     pub scroll_hold_ms: u64,
     pub dwell_zoom: f64,
     pub click_zoom: f64,
+    pub double_click_zoom: f64,
     pub drag_zoom: f64,
     pub typing_zoom: f64,
     pub scroll_zoom: f64,
@@ -99,6 +110,7 @@ pub struct FocusConfig {
     pub min_pan_duration_ms: u64,
     pub max_pan_duration_ms: u64,
     pub pan_duration_per_unit_ms: f64,
+    pub min_confidence: f64,
 }
 
 impl Default for FocusConfig {
@@ -108,11 +120,13 @@ impl Default for FocusConfig {
             enter_duration_ms: 550,
             exit_duration_ms: 700,
             click_hold_ms: 1_100,
+            double_click_hold_ms: 1_300,
             drag_hold_ms: 650,
             typing_hold_ms: 1_050,
             scroll_hold_ms: 850,
             dwell_zoom: 1.24,
             click_zoom: 1.34,
+            double_click_zoom: 1.40,
             drag_zoom: 1.25,
             typing_zoom: 1.24,
             scroll_zoom: 1.22,
@@ -123,6 +137,7 @@ impl Default for FocusConfig {
             min_pan_duration_ms: 400,
             max_pan_duration_ms: 820,
             pan_duration_per_unit_ms: 2_000.0,
+            min_confidence: 0.68,
         }
     }
 }
@@ -148,6 +163,7 @@ struct Cue {
     hold_until_ms: u64,
     pose: CameraPose,
     reason: FocusReason,
+    confidence: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -174,12 +190,16 @@ impl FocusEngine for SmartFocusEngine {
         }
 
         let drags = drag_gestures(events);
-        let mut cues = self.click_cues(events, &drags);
+        let double_clicks = double_click_gestures(events, &drags);
+        let mut cues = self.click_cues(events, &drags, &double_clicks);
+        cues.extend(self.double_click_cues(&double_clicks));
         cues.extend(self.drag_cues(&drags));
         cues.extend(self.typing_cues(events));
         cues.extend(self.scroll_cues(events));
         cues.extend(self.dwell_cues(events));
-        cues.retain(|cue| cue.time_ms < duration_ms);
+        cues.retain(|cue| {
+            cue.time_ms < duration_ms && cue.confidence >= self.config.min_confidence
+        });
         cues.sort_by_key(|cue| cue.time_ms);
         let cues = self.merge_cues(cues);
         Ok(self.timeline_from_cues(duration_ms, &cues))
@@ -221,7 +241,12 @@ impl SmartFocusEngine {
         self.analyze(duration_ms, &events)
     }
 
-    fn click_cues(&self, events: &[MouseEvent], drags: &[DragGesture]) -> Vec<Cue> {
+    fn click_cues(
+        &self,
+        events: &[MouseEvent],
+        drags: &[DragGesture],
+        double_clicks: &[DoubleClickGesture],
+    ) -> Vec<Cue> {
         events
             .iter()
             .enumerate()
@@ -236,6 +261,7 @@ impl SmartFocusEngine {
                     event.time_ms >= drag.start.time_ms && event.time_ms <= drag.end.time_ms
                 })
             })
+            .filter(|(_, event)| !is_double_click_member(event, double_clicks))
             .filter(|(index, _)| !click_during_fast_movement(events, *index))
             .map(|(_, event)| Cue {
                 time_ms: event.time_ms,
@@ -245,6 +271,29 @@ impl SmartFocusEngine {
                     zoom: self.config.click_zoom,
                 },
                 reason: FocusReason::Click,
+                confidence: click_confidence(event),
+            })
+            .collect()
+    }
+
+    fn double_click_cues(&self, gestures: &[DoubleClickGesture]) -> Vec<Cue> {
+        gestures
+            .iter()
+            .map(|gesture| Cue {
+                time_ms: gesture.first.time_ms,
+                hold_until_ms: gesture
+                    .second
+                    .time_ms
+                    .saturating_add(self.config.double_click_hold_ms),
+                pose: CameraPose {
+                    center: constrained_center(
+                        gesture.second.position,
+                        self.config.double_click_zoom,
+                    ),
+                    zoom: self.config.double_click_zoom,
+                },
+                reason: FocusReason::DoubleClick,
+                confidence: 0.99,
             })
             .collect()
     }
@@ -261,6 +310,7 @@ impl SmartFocusEngine {
                         zoom: self.config.drag_zoom,
                     },
                     reason: FocusReason::Drag,
+                    confidence: 0.96,
                 };
                 let end = Cue {
                     time_ms: drag.end.time_ms,
@@ -270,6 +320,7 @@ impl SmartFocusEngine {
                         zoom: self.config.drag_zoom,
                     },
                     reason: FocusReason::Drag,
+                    confidence: 0.96,
                 };
                 [start, end]
             })
@@ -314,6 +365,7 @@ impl SmartFocusEngine {
                     zoom: self.config.typing_zoom,
                 },
                 reason: FocusReason::Typing,
+                confidence: 0.84,
             });
             last_activity_ms = Some(event.time_ms);
         }
@@ -364,6 +416,7 @@ impl SmartFocusEngine {
                     zoom: self.config.scroll_zoom,
                 },
                 reason: FocusReason::Scroll,
+                confidence: 0.86,
             });
             last_scroll_ms = Some(event.time_ms);
         }
@@ -381,9 +434,14 @@ impl SmartFocusEngine {
                 let start = pair[0];
                 let end = pair[1];
                 let gap = end.time_ms.saturating_sub(start.time_ms);
-                if gap < self.config.dwell_threshold_ms {
+                let movement = distance(start.position, end.position);
+                if gap < self.config.dwell_threshold_ms || movement > DWELL_MAX_DISTANCE {
                     return None;
                 }
+                let duration_score = (gap.saturating_sub(self.config.dwell_threshold_ms) as f64
+                    / 1_500.0)
+                    .clamp(0.0, 1.0);
+                let stability_score = (1.0 - movement / DWELL_MAX_DISTANCE).clamp(0.0, 1.0);
                 let focus_time = start.time_ms.saturating_add(self.config.dwell_threshold_ms);
                 Some(Cue {
                     time_ms: focus_time,
@@ -393,6 +451,7 @@ impl SmartFocusEngine {
                         zoom: self.config.dwell_zoom,
                     },
                     reason: FocusReason::Dwell,
+                    confidence: 0.62 + 0.18 * duration_score + 0.18 * stability_score,
                 })
             })
             .collect()
@@ -412,7 +471,10 @@ impl SmartFocusEngine {
                         .saturating_add(self.config.direct_transition_gap_ms);
                 if close_in_space && (close_in_time || continues_active_focus) {
                     previous.hold_until_ms = previous.hold_until_ms.max(cue.hold_until_ms);
-                    if matches!(cue.reason, FocusReason::Click | FocusReason::Drag) {
+                    if matches!(
+                        cue.reason,
+                        FocusReason::Click | FocusReason::DoubleClick | FocusReason::Drag
+                    ) {
                         previous.pose = cue.pose;
                         previous.reason = cue.reason;
                     }
@@ -607,6 +669,62 @@ fn click_during_fast_movement(events: &[MouseEvent], click_index: usize) -> bool
         && recent_distance >= FAST_CLICK_RECENT_DISTANCE
 }
 
+fn click_confidence(event: &MouseEvent) -> f64 {
+    let settled_score = (1.0 - event.speed_px_s / 2_500.0).clamp(0.0, 1.0);
+    0.72 + 0.23 * settled_score
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DoubleClickGesture {
+    first: MouseEvent,
+    second: MouseEvent,
+}
+
+fn double_click_gestures(
+    events: &[MouseEvent],
+    drags: &[DragGesture],
+) -> Vec<DoubleClickGesture> {
+    let mut previous: Option<(usize, MouseEvent)> = None;
+    let mut gestures = Vec::new();
+    for (index, event) in events.iter().copied().enumerate() {
+        if !matches!(
+            event.kind,
+            MouseEventKind::LeftClick | MouseEventKind::RightClick
+        ) {
+            continue;
+        }
+        let belongs_to_drag = drags.iter().any(|drag| {
+            event.time_ms >= drag.start.time_ms && event.time_ms <= drag.end.time_ms
+        });
+        if belongs_to_drag || click_during_fast_movement(events, index) {
+            previous = None;
+            continue;
+        }
+
+        if let Some((_, first)) = previous
+            && event.kind == first.kind
+            && event.time_ms.saturating_sub(first.time_ms) <= DOUBLE_CLICK_MAX_GAP_MS
+            && distance(event.position, first.position) <= DOUBLE_CLICK_MAX_DISTANCE
+        {
+            gestures.push(DoubleClickGesture {
+                first,
+                second: event,
+            });
+            previous = None;
+        } else {
+            previous = Some((index, event));
+        }
+    }
+    gestures
+}
+
+fn is_double_click_member(event: &MouseEvent, gestures: &[DoubleClickGesture]) -> bool {
+    gestures.iter().any(|gesture| {
+        (event.time_ms == gesture.first.time_ms && event.kind == gesture.first.kind)
+            || (event.time_ms == gesture.second.time_ms && event.kind == gesture.second.kind)
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 struct DragGesture {
     start: MouseEvent,
@@ -787,6 +905,17 @@ mod tests {
     }
 
     #[test]
+    fn long_gap_with_large_pointer_change_is_not_mistaken_for_dwell() {
+        let events = vec![
+            mouse(100, 0.20, 0.40, 0.0, MouseEventKind::Move),
+            mouse(2_100, 0.70, 0.40, 0.0, MouseEventKind::Move),
+        ];
+        let timeline = SmartFocusEngine::default().analyze(4_000, &events).unwrap();
+
+        assert!(timeline.segments.is_empty());
+    }
+
+    #[test]
     fn click_has_stronger_zoom() {
         let events = vec![mouse(1_000, 0.6, 0.5, 0.0, MouseEventKind::LeftClick)];
         let timeline = SmartFocusEngine::default().analyze(3_000, &events).unwrap();
@@ -796,6 +925,58 @@ mod tests {
                 .iter()
                 .any(|segment| segment.to.zoom == 1.34)
         );
+    }
+
+    #[test]
+    fn double_click_becomes_one_stronger_intent() {
+        let events = vec![
+            mouse(1_000, 0.60, 0.50, 0.0, MouseEventKind::LeftClick),
+            mouse(1_280, 0.605, 0.50, 0.0, MouseEventKind::LeftClick),
+        ];
+        let timeline = SmartFocusEngine::default().analyze(4_000, &events).unwrap();
+
+        assert!(timeline.segments.iter().any(|segment| {
+            segment.reason == FocusReason::DoubleClick && segment.to.zoom == 1.40
+        }));
+        assert!(!timeline
+            .segments
+            .iter()
+            .any(|segment| segment.reason == FocusReason::Click));
+        assert_eq!(
+            timeline
+                .segments
+                .iter()
+                .filter(|segment| segment.from.zoom == 1.0 && segment.to.zoom > 1.0)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn confidence_threshold_prefers_no_zoom_over_a_weak_candidate() {
+        let strict = SmartFocusEngine::new(FocusConfig {
+            min_confidence: 0.96,
+            ..FocusConfig::default()
+        });
+        let single_click = vec![mouse(
+            1_000,
+            0.60,
+            0.50,
+            0.0,
+            MouseEventKind::LeftClick,
+        )];
+        assert!(strict.analyze(3_000, &single_click).unwrap().segments.is_empty());
+
+        let double_click = vec![
+            mouse(1_000, 0.60, 0.50, 0.0, MouseEventKind::LeftClick),
+            mouse(1_250, 0.60, 0.50, 0.0, MouseEventKind::LeftClick),
+        ];
+        assert!(strict
+            .analyze(3_000, &double_click)
+            .unwrap()
+            .segments
+            .iter()
+            .any(|segment| segment.reason == FocusReason::DoubleClick));
     }
 
     fn has_click_focus(events: &[MouseEvent]) -> bool {

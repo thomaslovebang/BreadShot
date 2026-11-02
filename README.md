@@ -32,7 +32,7 @@ The goal is not to become a general-purpose editor. The goal is to make editing 
 
 - Unlimited recording duration with no watermark.
 - One-display capture on multi-monitor Windows systems.
-- Automatic zoom and pan that distinguishes stable clicks, drag gestures, scrolling, dwell, and anonymous typing activity.
+- Automatic zoom and pan that distinguishes stable clicks, double clicks, drag gestures, scrolling, dwell, and anonymous typing activity.
 - Native system-audio capture through WASAPI loopback.
 - Optional microphone capture, synchronized and mixed into the MP4.
 - Custom global start/stop shortcut; `F8` works immediately by default.
@@ -53,7 +53,7 @@ BreadShot is becoming an **automatic director**, not a manual timeline editor.
 
 The next major milestone is Automatic Director 2.0:
 
-- Extend the existing click, drag, scroll, typing, and dwell intent model with double-click semantics and confidence scoring.
+- Calibrate the existing confidence-scored intent model against real recorded interaction fixtures.
 - Combine related actions into stable camera sequences instead of reacting to every event.
 - Prefer no zoom over a wrong zoom when confidence is low.
 - Add reliable window and region capture.
@@ -61,6 +61,8 @@ The next major milestone is Automatic Director 2.0:
 - Make ten consecutive recordings feel boringly reliable.
 
 See the public issues for implementation-sized tasks as this roadmap is broken down.
+
+Read the [Automatic Director design](docs/automatic-director.md) for the current signals, privacy boundary, confidence rules, and known limits.
 
 ## Download
 

@@ -6,6 +6,7 @@ export type FocusReason =
   | "full_frame"
   | "dwell"
   | "click"
+  | "double_click"
   | "drag"
   | "typing"
   | "scroll"

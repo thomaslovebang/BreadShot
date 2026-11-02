@@ -54,6 +54,7 @@ pub enum FocusReason {
     FullFrame,
     Dwell,
     Click,
+    DoubleClick,
     Drag,
     Typing,
     Scroll,
