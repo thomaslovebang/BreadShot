@@ -5,7 +5,7 @@ use std::{
     collections::HashSet,
     env,
     fs::File,
-    io::BufReader,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -178,6 +178,90 @@ fn evaluate(case: &RealCase, timeline: &CameraTimeline) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_trace_privacy<R: BufRead>(reader: R) -> Result<(), String> {
+    const METADATA_FIELDS: &[&str] = &[
+        "type",
+        "schema_version",
+        "origin_x",
+        "origin_y",
+        "width",
+        "height",
+        "sample_interval_ms",
+    ];
+    const MOUSE_FIELDS: &[&str] = &[
+        "type",
+        "time_ms",
+        "time",
+        "x",
+        "y",
+        "normalized_x",
+        "normalized_y",
+        "speed_px_s",
+        "click",
+        "event",
+        "cursor_role",
+    ];
+    const END_FIELDS: &[&str] = &["type", "time_ms"];
+    const ALLOWED_EVENTS: &[&str] = &[
+        "move",
+        "left_down",
+        "left_up",
+        "left_click",
+        "right_down",
+        "right_up",
+        "right_click",
+        "key_activity",
+        "scroll_up",
+        "scroll_down",
+        "scroll_left",
+        "scroll_right",
+    ];
+
+    for (index, line) in reader.lines().enumerate() {
+        let line_number = index + 1;
+        let line = line.map_err(|error| format!("cannot read trace line {line_number}: {error}"))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|error| format!("trace line {line_number} is invalid JSON: {error}"))?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| format!("trace line {line_number} must be a JSON object"))?;
+        let line_type = object
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("trace line {line_number} has no string type"))?;
+        let allowed = match line_type {
+            "metadata" => METADATA_FIELDS,
+            "mouse" => MOUSE_FIELDS,
+            "end" => END_FIELDS,
+            _ => {
+                return Err(format!(
+                    "trace line {line_number} has forbidden type '{line_type}'"
+                ));
+            }
+        };
+        if let Some(field) = object.keys().find(|field| !allowed.contains(&field.as_str())) {
+            return Err(format!(
+                "trace line {line_number} contains non-public field '{field}'"
+            ));
+        }
+        if line_type == "mouse" {
+            let event = object
+                .get("event")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("trace line {line_number} has no string event"))?;
+            if !ALLOWED_EVENTS.contains(&event) {
+                return Err(format!(
+                    "trace line {line_number} contains forbidden event '{event}'"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run(manifest_path: &Path, require_gate: bool) -> Result<bool, String> {
     let manifest = load_manifest(manifest_path)?;
     let root = manifest_path
@@ -191,12 +275,16 @@ fn run(manifest_path: &Path, require_gate: bool) -> Result<bool, String> {
         let status = if !trace_path.is_file() {
             CaseStatus::Missing
         } else {
-            let trace = File::open(&trace_path)
+            let privacy_trace = File::open(&trace_path)
                 .map_err(|error| format!("cannot open {}: {error}", trace_path.display()))?;
-            match engine
-                .analyze_trace(BufReader::new(trace))
-                .and_then(|timeline| evaluate(case, &timeline))
-            {
+            let result = validate_trace_privacy(BufReader::new(privacy_trace)).and_then(|()| {
+                let trace = File::open(&trace_path)
+                    .map_err(|error| format!("cannot reopen {}: {error}", trace_path.display()))?;
+                engine
+                    .analyze_trace(BufReader::new(trace))
+                    .and_then(|timeline| evaluate(case, &timeline))
+            });
+            match result {
                 Ok(()) => CaseStatus::Passed,
                 Err(error) => CaseStatus::Failed(error),
             }
@@ -307,5 +395,22 @@ mod tests {
         assert_eq!(manifest.target_cases, 20);
         assert_eq!(manifest.required_publishable, 18);
         assert_eq!(manifest.cases.len(), 20);
+    }
+
+    #[test]
+    fn privacy_validator_accepts_only_tracker_fields() {
+        let trace = concat!(
+            "{\"type\":\"metadata\",\"schema_version\":4,\"origin_x\":0,\"origin_y\":0,\"width\":1920,\"height\":1080,\"sample_interval_ms\":16}\n",
+            "{\"type\":\"mouse\",\"time_ms\":10,\"time\":0.01,\"x\":20,\"y\":30,\"normalized_x\":0.1,\"normalized_y\":0.2,\"speed_px_s\":0.0,\"click\":false,\"event\":\"key_activity\",\"cursor_role\":\"text\"}\n",
+            "{\"type\":\"end\",\"time_ms\":1000}\n"
+        );
+        validate_trace_privacy(BufReader::new(trace.as_bytes())).unwrap();
+    }
+
+    #[test]
+    fn privacy_validator_rejects_accidental_text_capture() {
+        let trace = "{\"type\":\"mouse\",\"event\":\"key_activity\",\"typed_text\":\"private\"}\n";
+        let error = validate_trace_privacy(BufReader::new(trace.as_bytes())).unwrap_err();
+        assert!(error.contains("non-public field 'typed_text'"));
     }
 }

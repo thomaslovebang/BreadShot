@@ -4,6 +4,8 @@ This directory accepts sanitized JSONL traces produced by BreadShot's local trac
 
 Use the exact filenames declared in `../manifest.json`. Record the matching task naturally, then copy only the JSONL trace here after inspecting it for the allowed fields.
 
+The `real_benchmark` runner enforces this list as a strict privacy allowlist. Any unknown field, line type, or event fails structural validation instead of being silently ignored.
+
 Do not mark a case publishable from the trace alone. Render its corresponding source recording with the same build, review the final MP4 at normal playback speed, and add an evidence URL or reproducible local reference to the manifest review entry.
 
 The release gate is intentionally strict:
