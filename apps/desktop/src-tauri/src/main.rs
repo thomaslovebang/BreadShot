@@ -342,7 +342,7 @@ fn default_recordings_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("Videos")
-        .join("FocusFlow")
+        .join("BreadShot")
 }
 
 fn new_output_path(directory: &PathBuf) -> Result<PathBuf, String> {
@@ -1668,7 +1668,7 @@ fn main() {
             reveal_output
         ])
         .build(tauri::generate_context!())
-        .expect("failed to build FocusFlow");
+        .expect("failed to build BreadShot");
 
     app.run(|handle, event| {
         if matches!(event, tauri::RunEvent::ExitRequested { .. }) {

@@ -44,7 +44,7 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FocusFlow-Windows-x64
+          name: BreadShot-Windows-x64
           path: |
             target/release/bundle/nsis/*-setup.exe
             target/release/bundle/nsis/*-setup.exe.sha256
@@ -58,4 +58,4 @@ jobs:
         run: |
           $installer = Get-ChildItem "../../target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
           $checksum = Get-Item "$($installer.FullName).sha256"
-          gh release create $env:GITHUB_REF_NAME $installer.FullName $checksum.FullName --title "FocusFlow $env:GITHUB_REF_NAME" --generate-notes
+          gh release create $env:GITHUB_REF_NAME $installer.FullName $checksum.FullName --title "BreadShot $env:GITHUB_REF_NAME" --generate-notes

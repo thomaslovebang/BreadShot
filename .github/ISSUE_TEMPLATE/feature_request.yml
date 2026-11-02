@@ -1,5 +1,5 @@
 name: 功能建议
-description: 告诉我们怎样让 FocusFlow 更好用
+description: 告诉我们怎样让 BreadShot 更好用
 title: "[Idea] "
 labels: ["enhancement"]
 body:
@@ -13,7 +13,7 @@ body:
   - type: textarea
     id: solution
     attributes:
-      label: 你希望 FocusFlow 怎样解决？
+      label: 你希望 BreadShot 怎样解决？
     validations:
       required: true
   - type: dropdown

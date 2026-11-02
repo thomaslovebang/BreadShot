@@ -5,11 +5,11 @@ labels: ["bug"]
 body:
   - type: markdown
     attributes:
-      value: 感谢帮助 FocusFlow 变得更稳定。请勿上传包含隐私信息的录屏文件。
+      value: 感谢帮助 BreadShot 变得更稳定。请勿上传包含隐私信息的录屏文件。
   - type: input
     id: version
     attributes:
-      label: FocusFlow 版本
+      label: BreadShot 版本
       placeholder: 例如 0.1.0
     validations:
       required: true

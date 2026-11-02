@@ -1,20 +1,20 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "FocusFlow",
-  "mainBinaryName": "FocusFlow",
+  "productName": "BreadShot",
+  "mainBinaryName": "BreadShot",
   "version": "0.3.1",
   "identifier": "app.focusflow.desktop",
   "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://127.0.0.1:1470", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
   "app": {
-    "windows": [{ "title": "FocusFlow", "width": 1200, "height": 820, "minWidth": 880, "minHeight": 640 }],
+    "windows": [{ "title": "BreadShot", "width": 1200, "height": 820, "minWidth": 880, "minHeight": 640 }],
     "security": { "assetProtocol": { "enable": true, "scope": [] } }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
     "useLocalToolsDir": true,
-    "publisher": "FocusFlow",
-    "homepage": "https://github.com/thomaslovebang/FocusFlow9",
+    "publisher": "BreadShot",
+    "homepage": "https://github.com/thomaslovebang/BreadShot",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "resources": {
       "bin/ffmpeg.exe": "bin/ffmpeg.exe",
@@ -24,12 +24,12 @@
       "legal/FFmpeg-package.sha256": "legal/FFmpeg-package.sha256",
       "../../../THIRD_PARTY_NOTICES.md": "legal/THIRD_PARTY_NOTICES.md"
     },
-    "copyright": "Copyright © 2026 FocusFlow contributors",
+    "copyright": "Copyright © 2026 BreadShot contributors",
     "license": "MIT",
     "licenseFile": "../../../LICENSE",
     "category": "Video",
-    "shortDescription": "Free Windows screen recorder with automatic zoom and pan.",
-    "longDescription": "FocusFlow records one Windows display and automatically turns mouse actions into smooth zoom and pan camera motion. Processing stays on the device and exports a watermark-free MP4.",
+    "shortDescription": "The zero-edit screen recorder for Windows.",
+    "longDescription": "BreadShot records your Windows screen and automatically directs the camera around your actions. Everything stays on your device and exports as a watermark-free MP4.",
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": {

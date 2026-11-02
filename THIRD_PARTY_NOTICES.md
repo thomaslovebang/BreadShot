@@ -1,22 +1,22 @@
 # Third-party notices
 
-FocusFlow's editor architecture and timeline interaction model are informed by
+BreadShot's editor architecture and timeline interaction model are informed by
 OpenCut and OpenCut Classic. OpenCut is distributed under the MIT License.
 
 - Source: https://github.com/opencut-app/opencut
 - Classic source: https://github.com/opencut-app/opencut-classic
 - License: MIT
 
-FocusFlow retains attribution for any substantial portions adapted from these
-projects. FocusFlow-specific project persistence, camera direction, Windows
+BreadShot retains attribution for any substantial portions adapted from these
+projects. BreadShot-specific project persistence, camera direction, Windows
 recording, mouse tracking, and rendering integration remain independently
 implemented in this repository.
 
 ## FFmpeg
 
-FocusFlow release installers bundle `ffmpeg.exe` and `ffprobe.exe` from the
+BreadShot release installers bundle `ffmpeg.exe` and `ffprobe.exe` from the
 Gyan FFmpeg 9.0.2 Essentials build. FFmpeg is a separate executable invoked by
-FocusFlow for local screen capture and video rendering. The bundled build is
+BreadShot for local screen capture and video rendering. The bundled build is
 licensed under GNU GPL version 3.
 
 - Windows build: https://www.gyan.dev/ffmpeg/builds/
@@ -26,4 +26,4 @@ licensed under GNU GPL version 3.
 - FFmpeg license information: https://ffmpeg.org/legal.html
 
 The installer includes the build's GPLv3 license and build README under its
-`legal` resources directory. FocusFlow itself is licensed separately under MIT.
+`legal` resources directory. BreadShot itself is licensed separately under MIT.

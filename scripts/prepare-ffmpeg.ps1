@@ -73,7 +73,7 @@ try {
         throw "The prepared FFmpeg binary does not provide the required libx264 encoder."
     }
 
-    Write-Host "FFmpeg is verified and ready for the FocusFlow bundle."
+    Write-Host "FFmpeg is verified and ready for the BreadShot bundle."
 }
 finally {
     if (Test-Path -LiteralPath $taskTemp) {
