@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "breadshot.clean",
+  "version": "1.0.0",
+  "name": { "en": "Clean", "zh": "简洁" },
+  "description": {
+    "en": "Calm, reliable automatic direction for tutorials and walkthroughs.",
+    "zh": "适合教程和操作演示的克制、稳定自动运镜。"
+  },
+  "author": "BreadShot",
+  "capabilities": ["camera_director", "cursor_style"],
+  "director": {
+    "dwell_threshold_ms": 700,
+    "enter_duration_ms": 550,
+    "exit_duration_ms": 700,
+    "click_hold_ms": 1100,
+    "double_click_hold_ms": 1300,
+    "drag_hold_ms": 650,
+    "typing_hold_ms": 1050,
+    "scroll_hold_ms": 850,
+    "dwell_zoom": 1.24,
+    "click_zoom": 1.34,
+    "double_click_zoom": 1.40,
+    "drag_zoom": 1.25,
+    "typing_zoom": 1.24,
+    "scroll_zoom": 1.22,
+    "merge_window_ms": 500,
+    "merge_distance": 0.06,
+    "direct_transition_gap_ms": 1000,
+    "click_cooldown_ms": 220,
+    "min_pan_duration_ms": 400,
+    "max_pan_duration_ms": 820,
+    "pan_duration_per_unit_ms": 2000.0,
+    "min_confidence": 0.68
+  },
+  "visual": { "background": "none", "padding": 0, "corner_radius": 0, "shadow": "none" },
+  "cursor": { "scale_percent": 100, "click_effect": "none" },
+  "editing": { "trim_idle": false, "idle_threshold_ms": 0 },
+  "export": { "aspect_ratio": "source", "resolution": "source", "fps": 60 },
+  "model": { "required": false, "capability": null, "fallback": "local_rules" }
+}

@@ -38,7 +38,7 @@ type AppLanguage = "system" | "zh" | "en" | "ja" | "fr" | "de" | "es" | "ar";
 type ResolvedLanguage = Exclude<AppLanguage, "system">;
 
 const DEFAULT_SHORTCUT = "F8";
-const APP_VERSION = "0.3.1";
+const APP_VERSION = "0.3.2";
 const SINGLE_KEY_PATTERN = /^(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4]))$/;
 const initialStatus: RecorderStatus = { isRecording: false, ffmpegAvailable: false, outputPath: null, outputDirectory: "", finalVideoPath: null };
 
@@ -51,6 +51,24 @@ const cursorRoles = [
 ] as const;
 type CursorRole = typeof cursorRoles[number][0];
 type CursorPreview = { path: string; hotspotX: number; hotspotY: number; width: number; height: number };
+type PageBackgroundSettings = { fit: "cover" | "contain"; positionX: number; positionY: number; zoom: number };
+
+const defaultPageBackgroundSettings: PageBackgroundSettings = { fit: "cover", positionX: 50, positionY: 50, zoom: 1 };
+
+function readPageBackgroundSettings(): PageBackgroundSettings {
+  try {
+    const saved = JSON.parse(localStorage.getItem("focusflow.pageBackgroundSettings") || "null");
+    if (saved && (saved.fit === "cover" || saved.fit === "contain")) {
+      return {
+        fit: saved.fit,
+        positionX: Math.min(100, Math.max(0, Number(saved.positionX) || 50)),
+        positionY: Math.min(100, Math.max(0, Number(saved.positionY) || 50)),
+        zoom: Math.min(2.5, Math.max(1, Number(saved.zoom) || 1)),
+      };
+    }
+  } catch { /* use defaults */ }
+  return defaultPageBackgroundSettings;
+}
 
 const effectsTranslations: Record<ResolvedLanguage, { nav: string; title: string; lead: string; custom: string; customHelp: string; size: string; sizeHelp: string; choose: string; restore: string; resetSize: string; windowsDefault: string; preview: string }> = {
   zh: { nav: "特效设置", title: "特效设置", lead: "只改变导出视频中的鼠标指针，不修改 Windows 系统设置。", custom: "自定义鼠标指针", customHelp: "可单独替换任意角色的 CUR 或 ANI 文件", size: "鼠标大小", sizeHelp: "全局等比例应用到全部指针角色", choose: "选择文件", restore: "恢复默认", resetSize: "恢复默认大小", windowsDefault: "Windows 默认", preview: "预览角色" },
@@ -61,6 +79,16 @@ const effectsTranslations: Record<ResolvedLanguage, { nav: string; title: string
   es: { nav: "Efectos", title: "Efectos", lead: "Solo cambia el puntero del vídeo exportado.", custom: "Punteros personalizados", customHelp: "CUR o ANI para cada función", size: "Tamaño", sizeHelp: "Escala global para todos los punteros", choose: "Elegir", restore: "Restaurar", resetSize: "Tamaño predeterminado", windowsDefault: "Windows predeterminado", preview: "Vista previa" },
   ar: { nav: "التأثيرات", title: "إعدادات التأثيرات", lead: "يغير المؤشر في الفيديو المصدر فقط دون إعدادات Windows.", custom: "مؤشرات مخصصة", customHelp: "ملف CUR أو ANI لكل دور", size: "حجم المؤشر", sizeHelp: "تحجيم موحد لجميع المؤشرات", choose: "اختيار", restore: "استعادة", resetSize: "الحجم الافتراضي", windowsDefault: "Windows الافتراضي", preview: "معاينة" },
 };
+
+const pageBackgroundTranslations = {
+  zh: { title: "自定义页面", help: "使用自己的图片装饰整个应用，不会出现在录制和成片中。", choose: "选择图片", adjust: "调整", restore: "恢复默认", modal: "调整应用背景", fill: "填满页面", full: "完整显示", fillHelp: "拖动图片选择显示区域，可使用滚轮或滑块缩放。", fullHelp: "完整显示图片，比例不一致时可能留边。", zoom: "缩放", cancel: "取消", save: "应用" },
+  en: { title: "Custom appearance", help: "Use your image across the entire app. It never appears in recordings.", choose: "Choose image", adjust: "Adjust", restore: "Restore default", modal: "Adjust app background", fill: "Fill page", full: "Show full image", fillHelp: "Drag to choose the visible area, then zoom with the wheel or slider.", fullHelp: "Shows the full image and may leave space when aspect ratios differ.", zoom: "Zoom", cancel: "Cancel", save: "Apply" },
+  ja: { title: "画面をカスタマイズ", help: "アプリ全体を画像で飾ります。録画や完成動画には入りません。", choose: "画像を選択", adjust: "調整", restore: "既定に戻す", modal: "アプリ背景を調整", fill: "画面を埋める", full: "画像全体を表示", fillHelp: "ドラッグで表示範囲を選び、ホイールまたはスライダーで拡大します。", fullHelp: "画像全体を表示し、比率が異なる場合は余白ができます。", zoom: "拡大", cancel: "キャンセル", save: "適用" },
+  fr: { title: "Apparence personnalisée", help: "Utilisez votre image dans toute l’application, sans l’inclure dans les enregistrements.", choose: "Choisir une image", adjust: "Ajuster", restore: "Réinitialiser", modal: "Ajuster l’arrière-plan", fill: "Remplir la page", full: "Afficher l’image entière", fillHelp: "Faites glisser pour choisir la zone visible et utilisez le zoom.", fullHelp: "Affiche toute l’image avec d’éventuelles marges.", zoom: "Zoom", cancel: "Annuler", save: "Appliquer" },
+  de: { title: "Eigene Oberfläche", help: "Verwende dein Bild in der gesamten App; es erscheint nicht in Aufnahmen.", choose: "Bild auswählen", adjust: "Anpassen", restore: "Standard", modal: "App-Hintergrund anpassen", fill: "Seite füllen", full: "Ganzes Bild", fillHelp: "Ziehe das Bild, um den Ausschnitt zu wählen, und passe den Zoom an.", fullHelp: "Zeigt das ganze Bild und kann Ränder lassen.", zoom: "Zoom", cancel: "Abbrechen", save: "Anwenden" },
+  es: { title: "Apariencia personalizada", help: "Usa tu imagen en toda la aplicación sin incluirla en el vídeo.", choose: "Elegir imagen", adjust: "Ajustar", restore: "Restaurar", modal: "Ajustar fondo", fill: "Llenar página", full: "Mostrar completa", fillHelp: "Arrastra para elegir el área visible y ajusta el zoom.", fullHelp: "Muestra toda la imagen y puede dejar márgenes.", zoom: "Zoom", cancel: "Cancelar", save: "Aplicar" },
+  ar: { title: "مظهر مخصص", help: "استخدم صورتك في التطبيق بالكامل دون ظهورها في التسجيل أو الفيديو النهائي.", choose: "اختيار صورة", adjust: "ضبط", restore: "استعادة الافتراضي", modal: "ضبط خلفية التطبيق", fill: "ملء الصفحة", full: "عرض الصورة كاملة", fillHelp: "اسحب لاختيار الجزء الظاهر واضبط التكبير.", fullHelp: "يعرض الصورة كاملة وقد يترك هوامش.", zoom: "التكبير", cancel: "إلغاء", save: "تطبيق" },
+} as const;
 
 function readCursorPaths(): Partial<Record<CursorRole, string>> {
   try { return JSON.parse(localStorage.getItem("focusflow.cursorPaths") || "{}"); } catch { return {}; }
@@ -166,6 +194,15 @@ function App() {
   const [cursorPaths, setCursorPaths] = useState<Partial<Record<CursorRole, string>>>(readCursorPaths);
   const [cursorPreviewRole, setCursorPreviewRole] = useState<CursorRole>("normal");
   const [cursorPreview, setCursorPreview] = useState<CursorPreview | null>(null);
+  const [cursorPreviewError, setCursorPreviewError] = useState<string | null>(null);
+  const [pageBackgroundPath, setPageBackgroundPath] = useState<string | null>(null);
+  const [pageBackgroundSettings, setPageBackgroundSettings] = useState<PageBackgroundSettings>(readPageBackgroundSettings);
+  const [pageBackgroundDraft, setPageBackgroundDraft] = useState<PageBackgroundSettings>(readPageBackgroundSettings);
+  const [pageBackgroundDialogOpen, setPageBackgroundDialogOpen] = useState(false);
+  const [applicationAspectRatio, setApplicationAspectRatio] = useState(16 / 9);
+  const appFrameRef = useRef<HTMLElement | null>(null);
+  const cropDragRef = useRef<{ x: number; y: number; positionX: number; positionY: number } | null>(null);
+  const cursorPreviewRequestRef = useRef(0);
   const statusRef = useRef(status);
   const busyRef = useRef(busy);
   const shortcutRef = useRef(shortcut);
@@ -176,15 +213,52 @@ function App() {
   const t = translations[resolvedLanguage];
   const audioText = audioTranslations[resolvedLanguage];
   const effectsText = effectsTranslations[resolvedLanguage];
+  const pageBackgroundText = pageBackgroundTranslations[resolvedLanguage];
 
   useEffect(() => {
+    void invoke<string | null>("page_background_path")
+      .then(setPageBackgroundPath)
+      .catch(() => setPageBackgroundPath(null));
+  }, []);
+
+  useEffect(() => {
+    const element = appFrameRef.current;
+    if (!element) return;
+    const update = () => {
+      const bounds = element.getBoundingClientRect();
+      if (bounds.width > 0 && bounds.height > 0) setApplicationAspectRatio(bounds.width / bounds.height);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (activePage !== "effects") return;
     let cancelled = false;
+    const requestId = ++cursorPreviewRequestRef.current;
+    setCursorPreview(null);
+    setCursorPreviewError(null);
     const customPath = customCursors ? cursorPaths[cursorPreviewRole] || null : null;
-    void invoke<CursorPreview>("render_cursor_preview", { role: cursorPreviewRole, customPath, sizePercent: cursorSize })
-      .then((preview) => { if (!cancelled) setCursorPreview(preview); })
-      .catch((error) => { if (!cancelled) setMessage(`指针预览失败：${String(error)}`); });
-    return () => { cancelled = true; };
-  }, [customCursors, cursorPaths, cursorPreviewRole, cursorSize]);
+    const timer = window.setTimeout(() => {
+      void invoke<CursorPreview>("render_cursor_preview", { role: cursorPreviewRole, customPath, sizePercent: cursorSize })
+        .then((preview) => {
+          if (!cancelled && requestId === cursorPreviewRequestRef.current) {
+            setCursorPreview(preview);
+            setCursorPreviewError(null);
+          }
+        })
+        .catch((error) => {
+          if (!cancelled && requestId === cursorPreviewRequestRef.current) {
+            const description = String(error);
+            setCursorPreviewError(description);
+            setMessage(`指针预览失败：${description}`);
+          }
+        });
+    }, 100);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activePage, customCursors, cursorPaths, cursorPreviewRole, cursorSize]);
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { busyRef.current = busy; }, [busy]);
@@ -226,7 +300,34 @@ function App() {
         setDisplays(monitorList);
         setSelectedDisplayId(initialDisplay.id);
 
-        const audio = await invoke<AudioCapabilities>("list_audio_devices").catch(() => ({ systemAudioAvailable: false, microphones: [] }));
+        let next = await invoke<RecorderStatus>("recorder_status");
+        const savedDirectory = localStorage.getItem("focusflow.outputDirectory");
+        let savedDirectoryWarning: string | null = null;
+        if (savedDirectory && savedDirectory !== next.outputDirectory) {
+          try {
+            next = await invoke<RecorderStatus>("set_output_directory", { directory: savedDirectory });
+          } catch {
+            localStorage.removeItem("focusflow.outputDirectory");
+            savedDirectoryWarning = `之前的保存位置当前不可用，已自动切换到 ${next.outputDirectory}`;
+          }
+        }
+        setStatus(next);
+        setMessage(savedDirectoryWarning || (next.ffmpegAvailable ? "准备就绪" : "未找到 FFmpeg，暂时无法录制"));
+      } catch (error) {
+        setMessage(String(error));
+      } finally {
+        setBusy(false);
+      }
+    }
+    void initialize();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<AudioCapabilities>("list_audio_devices")
+      .catch(() => ({ systemAudioAvailable: false, microphones: [] }))
+      .then((audio) => {
+        if (cancelled) return;
         setAudioCapabilities(audio);
         const savedMicrophone = localStorage.getItem("focusflow.microphoneDevice");
         const selectedMicrophone = audio.microphones.find((device) => device.id === savedMicrophone)
@@ -235,21 +336,8 @@ function App() {
         if (selectedMicrophone) setMicrophoneDeviceId(selectedMicrophone.id);
         if (!audio.systemAudioAvailable) setSystemAudio(false);
         if (audio.microphones.length === 0) setMicrophone(false);
-
-        let next = await invoke<RecorderStatus>("recorder_status");
-        const savedDirectory = localStorage.getItem("focusflow.outputDirectory");
-        if (savedDirectory && savedDirectory !== next.outputDirectory) {
-          next = await invoke<RecorderStatus>("set_output_directory", { directory: savedDirectory });
-        }
-        setStatus(next);
-        setMessage(next.ffmpegAvailable ? "准备就绪" : "未找到 FFmpeg，暂时无法录制");
-      } catch (error) {
-        setMessage(String(error));
-      } finally {
-        setBusy(false);
-      }
-    }
-    void initialize();
+      });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -402,6 +490,55 @@ function App() {
     }
   }
 
+  async function choosePageBackground() {
+    try {
+      const selected = await invoke<string | null>("choose_page_background");
+      if (!selected) return;
+      setPageBackgroundPath(selected);
+      setPageBackgroundDraft(pageBackgroundSettings);
+      setPageBackgroundDialogOpen(true);
+    } catch (error) {
+      setMessage(readableError(error));
+    }
+  }
+
+  async function clearPageBackground() {
+    try {
+      await invoke("clear_page_background");
+      setPageBackgroundPath(null);
+      setPageBackgroundSettings(defaultPageBackgroundSettings);
+      setPageBackgroundDraft(defaultPageBackgroundSettings);
+      localStorage.removeItem("focusflow.pageBackgroundSettings");
+      setMessage("应用已恢复默认外观");
+    } catch (error) {
+      setMessage(readableError(error));
+    }
+  }
+
+  function savePageBackgroundSettings() {
+    const next = pageBackgroundDraft.fit === "contain" ? { ...pageBackgroundDraft, zoom: 1 } : pageBackgroundDraft;
+    setPageBackgroundSettings(next);
+    localStorage.setItem("focusflow.pageBackgroundSettings", JSON.stringify(next));
+    setPageBackgroundDialogOpen(false);
+  }
+
+  function movePageBackground(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = cropDragRef.current;
+    if (!drag || pageBackgroundDraft.fit !== "cover") return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const positionX = Math.min(100, Math.max(0, drag.positionX - (event.clientX - drag.x) / bounds.width * 100));
+    const positionY = Math.min(100, Math.max(0, drag.positionY - (event.clientY - drag.y) / bounds.height * 100));
+    setPageBackgroundDraft((current) => ({ ...current, positionX, positionY }));
+  }
+
+  function pageBackgroundImageStyle(settings: PageBackgroundSettings): React.CSSProperties {
+    return {
+      objectFit: settings.fit,
+      objectPosition: `${settings.positionX}% ${settings.positionY}%`,
+      transform: `scale(${settings.fit === "cover" ? settings.zoom : 1})`,
+    };
+  }
+
   async function chooseCursorFile(role: CursorRole) {
     if (status.isRecording || busy) return;
     const selected = await invoke<string | null>("choose_cursor_file", { initialDirectory: localStorage.getItem("focusflow.cursorDirectory") });
@@ -475,7 +612,8 @@ function App() {
 
   return (
     <main className="shell">
-      <section className="app-frame product-shell">
+      <section ref={appFrameRef} className={`app-frame product-shell ${pageBackgroundPath ? "has-custom-page-background" : ""}`}>
+        {pageBackgroundPath && <div className="custom-page-background"><img src={`${convertFileSrc(pageBackgroundPath)}?page-background=1`} alt="" style={pageBackgroundImageStyle(pageBackgroundSettings)} /></div>}
         <aside className="side-rail">
           <button className={`rail-brand ${activePage === "record" ? "active" : ""}`} type="button" aria-label={t.record} onClick={() => setActivePage("record")}><span className="brand-mark"><i /></span></button>
           <nav className="rail-navigation" aria-label="BreadShot">
@@ -526,6 +664,7 @@ function App() {
                   <div className="setting-row"><span className="setting-index">03</span><div className="setting-copy"><strong>{t.shortcut}</strong><span>{t.shortcutHelp}</span></div><div className="shortcut-control"><kbd>{shortcut}</kbd><button type="button" className="secondary-button" disabled={status.isRecording || busy} onClick={() => { setCapturedShortcut(null); setShortcutDialogOpen(true); }}>{t.change}</button></div></div>
                   <div className="setting-row"><span className="setting-index">04</span><div className="setting-copy"><strong>{audioText.system}</strong><span>{audioCapabilities.systemAudioAvailable ? audioText.systemHelp : audioText.unavailable}</span></div><button type="button" role="switch" aria-checked={systemAudio} className={`toggle-switch ${systemAudio ? "active" : ""}`} disabled={!audioCapabilities.systemAudioAvailable || status.isRecording || busy} onClick={() => { const next = !systemAudio; setSystemAudio(next); localStorage.setItem("focusflow.systemAudio", String(next)); }}><i /></button></div>
                   <div className="setting-row"><span className="setting-index">05</span><div className="setting-copy"><strong>{audioText.microphone}</strong><span>{audioCapabilities.microphones.length > 0 ? audioText.microphoneHelp : audioText.noMicrophone}</span></div><div className="audio-control"><select className="display-select microphone-select" value={microphoneDeviceId} disabled={!microphone || status.isRecording || busy || audioCapabilities.microphones.length === 0} onChange={(event) => { setMicrophoneDeviceId(event.target.value); localStorage.setItem("focusflow.microphoneDevice", event.target.value); }}>{audioCapabilities.microphones.map((device) => <option key={device.id} value={device.id}>{device.name}{device.isDefault ? ` · ${audioText.defaultDevice}` : ""}</option>)}</select><button type="button" role="switch" aria-checked={microphone} className={`toggle-switch ${microphone ? "active" : ""}`} disabled={audioCapabilities.microphones.length === 0 || status.isRecording || busy} onClick={() => { const next = !microphone; setMicrophone(next); localStorage.setItem("focusflow.microphone", String(next)); }}><i /></button></div></div>
+                  <div className="setting-row"><span className="setting-index">06</span><div className="setting-copy"><strong>{pageBackgroundText.title}</strong><span>{pageBackgroundText.help}</span></div><div className="page-background-actions"><button type="button" className="secondary-button" onClick={() => void choosePageBackground()}>{pageBackgroundText.choose}</button>{pageBackgroundPath && <><button type="button" className="secondary-button" onClick={() => { setPageBackgroundDraft(pageBackgroundSettings); setPageBackgroundDialogOpen(true); }}>{pageBackgroundText.adjust}</button><button type="button" className="secondary-button danger-subtle" onClick={() => void clearPageBackground()}>{pageBackgroundText.restore}</button></>}</div></div>
                   <div className="privacy-note"><span>⌾</span><div><strong>{t.privacy}</strong><small>{t.privacyHelp}</small></div></div>
                 </div>
               </section>
@@ -544,7 +683,10 @@ function App() {
                   </section>
                   <section className="cursor-preview-card">
                     <div className="effects-card-heading"><div><strong>{effectsText.size}</strong><span>{effectsText.sizeHelp}</span></div><b>{cursorSize}%</b></div>
-                    <div className="cursor-preview-stage">{cursorPreview && <img src={convertFileSrc(cursorPreview.path)} alt={cursorRoles.find(([role]) => role === cursorPreviewRole)?.[1]} />}</div>
+                    <div className="cursor-preview-stage">
+                      {cursorPreview && <img key={cursorPreview.path} src={`${convertFileSrc(cursorPreview.path)}?v=${encodeURIComponent(cursorPreview.path)}`} alt={cursorRoles.find(([role]) => role === cursorPreviewRole)?.[1]} />}
+                      {cursorPreviewError && <span className="cursor-preview-error">自定义指针文件当前不可访问<br /><small>{cursorPreviewError}</small></span>}
+                    </div>
                     <label className="cursor-size-slider"><span>50%</span><input type="range" min="50" max="250" step="5" value={cursorSize} disabled={status.isRecording || busy} onChange={(event) => { const next = Number(event.target.value); setCursorSize(next); localStorage.setItem("focusflow.cursorSize", String(next)); }} /><span>250%</span></label>
                     <div className="cursor-preview-controls"><label className="cursor-preview-select"><span>{effectsText.preview}</span><select className="display-select" value={cursorPreviewRole} onChange={(event) => setCursorPreviewRole(event.target.value as CursorRole)}>{cursorRoles.map(([role, label]) => <option key={role} value={role}>{label}</option>)}</select></label><button type="button" className="secondary-button reset-size-button" disabled={cursorSize === 100 || status.isRecording || busy} onClick={restoreCursorSize}>{effectsText.resetSize}</button></div>
                   </section>
@@ -580,6 +722,19 @@ function App() {
             <p className="eyebrow">快捷键设置</p><h2 id="shortcut-title">按下一个键</h2><p>它将同时用于开始和结束录制。</p>
             <div className={`captured-key ${capturedShortcut ? "has-key" : ""}`}>{capturedShortcut || "等待按键…"}</div>
             <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShortcutDialogOpen(false)}>取消</button><button type="button" className="primary-button compact" disabled={!capturedShortcut} onClick={() => void applyShortcut()}>保存</button></div>
+          </section>
+        </div>
+      )}
+
+      {pageBackgroundDialogOpen && pageBackgroundPath && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setPageBackgroundDialogOpen(false)}>
+          <section className="page-background-modal" role="dialog" aria-modal="true" aria-labelledby="page-background-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="page-background-modal-heading"><div><p className="eyebrow">APPEARANCE</p><h2 id="page-background-title">{pageBackgroundText.modal}</h2></div><button type="button" className="modal-close" aria-label={pageBackgroundText.cancel} onClick={() => setPageBackgroundDialogOpen(false)}>×</button></div>
+            <div className="page-background-modes"><button type="button" className={pageBackgroundDraft.fit === "cover" ? "active" : ""} onClick={() => setPageBackgroundDraft((current) => ({ ...current, fit: "cover" }))}>{pageBackgroundText.fill}</button><button type="button" className={pageBackgroundDraft.fit === "contain" ? "active" : ""} onClick={() => setPageBackgroundDraft((current) => ({ ...current, fit: "contain", zoom: 1 }))}>{pageBackgroundText.full}</button></div>
+            <p className="page-background-help">{pageBackgroundDraft.fit === "cover" ? pageBackgroundText.fillHelp : pageBackgroundText.fullHelp}</p>
+            <div className={`page-background-crop ${pageBackgroundDraft.fit}`} style={{ aspectRatio: String(applicationAspectRatio) }} onPointerDown={(event) => { if (pageBackgroundDraft.fit !== "cover") return; event.currentTarget.setPointerCapture(event.pointerId); cropDragRef.current = { x: event.clientX, y: event.clientY, positionX: pageBackgroundDraft.positionX, positionY: pageBackgroundDraft.positionY }; }} onPointerMove={movePageBackground} onPointerUp={() => { cropDragRef.current = null; }} onPointerCancel={() => { cropDragRef.current = null; }} onWheel={(event) => { if (pageBackgroundDraft.fit !== "cover") return; event.preventDefault(); const zoom = Math.min(2.5, Math.max(1, pageBackgroundDraft.zoom - event.deltaY * 0.001)); setPageBackgroundDraft((current) => ({ ...current, zoom })); }}><img src={`${convertFileSrc(pageBackgroundPath)}?crop-preview=1`} alt="" draggable={false} style={pageBackgroundImageStyle(pageBackgroundDraft)} /><span className="crop-grid" /></div>
+            <label className={`page-background-zoom ${pageBackgroundDraft.fit === "contain" ? "disabled" : ""}`}><span>{pageBackgroundText.zoom}</span><input type="range" min="1" max="2.5" step="0.01" disabled={pageBackgroundDraft.fit === "contain"} value={pageBackgroundDraft.fit === "contain" ? 1 : pageBackgroundDraft.zoom} onChange={(event) => setPageBackgroundDraft((current) => ({ ...current, zoom: Number(event.target.value) }))} /><b>{Math.round((pageBackgroundDraft.fit === "contain" ? 1 : pageBackgroundDraft.zoom) * 100)}%</b></label>
+            <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setPageBackgroundDialogOpen(false)}>{pageBackgroundText.cancel}</button><button type="button" className="primary-button compact" onClick={savePageBackgroundSettings}>{pageBackgroundText.save}</button></div>
           </section>
         </div>
       )}

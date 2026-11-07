@@ -10,20 +10,21 @@ use focusflow_focus_engine::{DirectorProfile, SmartFocusEngine};
 use focusflow_platform_windows::{CaptureBounds, MouseTrackerHandle, cursor_render};
 use focusflow_project_store::{
     EditOperation, EditTimeline, FocusFlowProject, PROJECT_SCHEMA_VERSION, ProjectAssets,
-    ProjectState, VideoClipEdit, load_edit_timeline, load_project, save_edit_timeline,
-    save_project,
+    ProjectSkillSelection, ProjectState, VideoClipEdit, load_edit_timeline, load_project,
+    save_edit_timeline, save_project,
 };
 use focusflow_renderer::{FfmpegRenderer, Renderer};
 use audio_capture::{AudioCaptureHandle, AudioDeviceInfo};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::DefaultHasher},
     env,
     fs::{self, File},
+    hash::{Hash, Hasher},
     io::{BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager, State};
@@ -90,7 +91,7 @@ struct ProcessingProgress {
     message: &'static str,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CursorPreview {
     path: String,
@@ -130,8 +131,23 @@ impl CursorOptions {
     }
 }
 
+static CURSOR_PREVIEW_CACHE: OnceLock<Mutex<HashMap<String, CursorPreview>>> = OnceLock::new();
+
 #[tauri::command]
-fn render_cursor_preview(
+async fn render_cursor_preview(
+    app: tauri::AppHandle,
+    role: String,
+    custom_path: Option<String>,
+    size_percent: u32,
+) -> Result<CursorPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        render_cursor_preview_blocking(app, role, custom_path, size_percent)
+    })
+    .await
+    .map_err(|error| format!("鼠标指针预览任务失败：{error}"))?
+}
+
+fn render_cursor_preview_blocking(
     app: tauri::AppHandle,
     role: String,
     custom_path: Option<String>,
@@ -149,6 +165,29 @@ fn render_cursor_preview(
             return Err("请选择有效的 .cur 或 .ani 指针文件".to_string());
         }
     }
+    let mut hasher = DefaultHasher::new();
+    role.hash(&mut hasher);
+    size_percent.hash(&mut hasher);
+    custom_path.hash(&mut hasher);
+    if let Some(path) = custom {
+        let metadata = fs::metadata(path).map_err(|error| format!("无法读取鼠标指针文件：{error}"))?;
+        metadata.len().hash(&mut hasher);
+        metadata.modified().ok().hash(&mut hasher);
+    }
+    let cache_key = format!("{:016x}", hasher.finish());
+    let cache = CURSOR_PREVIEW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(preview) = cache
+        .lock()
+        .map_err(|_| "鼠标指针预览缓存不可用".to_string())?
+        .get(&cache_key)
+        .filter(|preview| std::path::Path::new(&preview.path).is_file())
+        .cloned()
+    {
+        app.asset_protocol_scope()
+            .allow_file(&preview.path)
+            .map_err(|error| format!("无法授权指针预览：{error}"))?;
+        return Ok(preview);
+    }
     let cache = app
         .path()
         .app_cache_dir()
@@ -157,19 +196,25 @@ fn render_cursor_preview(
     fs::create_dir_all(&cache).map_err(|error| format!("无法创建指针预览目录：{error}"))?;
     let safe_role = role.replace(|character: char| !character.is_ascii_alphanumeric(), "_");
     let animated = custom.is_some_and(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("ani")));
-    let output = cache.join(format!("{safe_role}-{size_percent}.{}", if animated { "gif" } else { "png" }));
+    let output = cache.join(format!("{safe_role}-{size_percent}-{cache_key}.{}", if animated { "gif" } else { "png" }));
     let animation = cursor_render::render_cursor_animation(&role, custom, size_percent)?;
     cursor_render::save_cursor_preview(&animation, &output)?;
     app.asset_protocol_scope()
         .allow_file(&output)
         .map_err(|error| format!("无法授权指针预览：{error}"))?;
-    Ok(CursorPreview {
+    let preview = CursorPreview {
         path: output.display().to_string(),
         hotspot_x: animation.hotspot_x,
         hotspot_y: animation.hotspot_y,
         width: animation.width,
         height: animation.height,
-    })
+    };
+    CURSOR_PREVIEW_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| "鼠标指针预览缓存不可用".to_string())?
+        .insert(cache_key, preview.clone());
+    Ok(preview)
 }
 
 #[tauri::command]
@@ -179,6 +224,74 @@ fn choose_cursor_file(app: tauri::AppHandle, initial_directory: Option<String>) 
         picker = picker.set_directory(directory);
     }
     picker.blocking_pick_file()?.into_path().ok().map(|path| path.display().to_string())
+}
+
+const PAGE_BACKGROUND_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "bmp"];
+
+fn existing_page_background(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("无法读取应用数据目录：{error}"))?;
+    Ok(PAGE_BACKGROUND_EXTENSIONS
+        .iter()
+        .map(|extension| directory.join(format!("page-background.{extension}")))
+        .find(|path| path.is_file()))
+}
+
+fn authorize_page_background(app: &tauri::AppHandle, path: &PathBuf) -> Result<String, String> {
+    app.asset_protocol_scope()
+        .allow_file(path)
+        .map_err(|error| format!("无法授权自定义页面图片：{error}"))?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+fn page_background_path(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    existing_page_background(&app)?
+        .map(|path| authorize_page_background(&app, &path))
+        .transpose()
+}
+
+#[tauri::command]
+fn choose_page_background(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let Some(source) = app
+        .dialog()
+        .file()
+        .add_filter("Image", &PAGE_BACKGROUND_EXTENSIONS)
+        .blocking_pick_file()
+        .and_then(|file| file.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|value| PAGE_BACKGROUND_EXTENSIONS.contains(&value.as_str()))
+        .ok_or_else(|| "请选择 PNG、JPG、JPEG、WebP 或 BMP 图片".to_string())?;
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("无法读取应用数据目录：{error}"))?;
+    fs::create_dir_all(&directory).map_err(|error| format!("无法创建应用数据目录：{error}"))?;
+    let target = directory.join(format!("page-background.{extension}"));
+    fs::copy(&source, &target).map_err(|error| format!("无法保存自定义页面图片：{error}"))?;
+    for other_extension in PAGE_BACKGROUND_EXTENSIONS {
+        let other = directory.join(format!("page-background.{other_extension}"));
+        if other != target && other.is_file() {
+            let _ = fs::remove_file(other);
+        }
+    }
+    authorize_page_background(&app, &target).map(Some)
+}
+
+#[tauri::command]
+fn clear_page_background(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(path) = existing_page_background(&app)? {
+        fs::remove_file(path).map_err(|error| format!("无法恢复默认页面：{error}"))?;
+    }
+    Ok(())
 }
 
 fn emit_processing_progress(
@@ -415,7 +528,11 @@ fn set_output_directory(
     if path.as_os_str().is_empty() {
         return Err("保存位置不能为空".to_string());
     }
-    fs::create_dir_all(&path).map_err(|error| format!("无法使用该保存位置：{error}"))?;
+    fs::create_dir_all(&path).map_err(|error| match error.raw_os_error() {
+        Some(2 | 3 | 21) => "这个保存位置当前不存在或设备未连接，请重新选择保存位置".to_string(),
+        Some(112) => "这个保存位置的磁盘空间不足，请清理磁盘或重新选择保存位置".to_string(),
+        _ => format!("无法使用该保存位置：{error}"),
+    })?;
     if !path.is_dir() {
         return Err("选择的位置不是文件夹".to_string());
     }
@@ -1024,6 +1141,10 @@ fn start_recording(
             DirectorProfile::Soft => "soft",
         }
         .to_string(),
+        selected_skill: Some(ProjectSkillSelection {
+            id: "breadshot.clean".to_string(),
+            version: "1.0.0".to_string(),
+        }),
         assets: ProjectAssets {
             source_video: asset_name(&output_path)?,
             mouse_trace: asset_name(&mouse_events_path)?,
@@ -1319,6 +1440,16 @@ fn apply_cursor_overlay(recording: &ActiveRecording) -> Result<(), String> {
     if points.is_empty() {
         return Ok(());
     }
+    // Mouse tracking starts as soon as the recorder process is spawned, while gdigrab may
+    // need a few hundred milliseconds before the first encoded frame exists (especially at
+    // 4K). Align the end of the real-time trace with the encoded video so the rendered cursor
+    // does not trail the user's actual movement by that startup delay.
+    let trace_duration_ms = points.last().map_or(0, |point| point.0);
+    let video_duration_ms = probe_video_duration_ms(&recording.ffprobe_path, &recording.output_path)?;
+    let cursor_lead_ms = trace_duration_ms.saturating_sub(video_duration_ms).min(2_000);
+    for point in &mut points {
+        point.0 = point.0.saturating_sub(cursor_lead_ms);
+    }
     // The tracker can report far more often than the 60 fps video can display.
     // Keep only the latest position for each frame to avoid a huge sendcmd script.
     let mut sampled = Vec::with_capacity(points.len().min(36_000));
@@ -1477,6 +1608,25 @@ fn apply_cursor_overlay(recording: &ActiveRecording) -> Result<(), String> {
     Ok(())
 }
 
+fn probe_video_duration_ms(ffprobe: &PathBuf, source: &PathBuf) -> Result<u64, String> {
+    let output = command(ffprobe)
+        .args(["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1"])
+        .arg(source)
+        .output()
+        .map_err(|error| format!("无法读取视频时长：{error}"))?;
+    if !output.status.success() {
+        return Err(format!("无法读取视频时长：{}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let seconds = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<f64>()
+        .map_err(|error| format!("无法解析视频时长：{error}"))?;
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return Err("视频时长无效".to_string());
+    }
+    Ok((seconds * 1_000.0).round() as u64)
+}
+
 fn h264_nvenc_available(ffmpeg: &PathBuf) -> bool {
     command(ffmpeg)
         .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=size=64x64:rate=1", "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "NUL"])
@@ -1611,8 +1761,9 @@ fn reveal_output(state: State<'_, RecorderState>) -> Result<(), String> {
 fn generate_camera_timeline(recording: &ActiveRecording) -> Result<CameraTimeline, String> {
     let trace = File::open(&recording.mouse_events_path)
         .map_err(|error| format!("无法读取鼠标轨迹：{error}"))?;
-    let timeline = SmartFocusEngine::for_profile(recording.director_profile)
-        .analyze_trace(BufReader::new(trace))?;
+    let engine = SmartFocusEngine::for_profile(recording.director_profile);
+    let (duration_ms, candidates) = engine.analyze_trace_candidates(BufReader::new(trace))?;
+    let timeline = engine.timeline_from_candidates(duration_ms, &candidates);
     let output = File::create(&recording.camera_timeline_path)
         .map_err(|error| format!("无法创建镜头时间线：{error}"))?;
     serde_json::to_writer_pretty(BufWriter::new(output), &timeline)
@@ -1686,6 +1837,9 @@ fn main() {
             list_audio_devices,
             render_cursor_preview,
             choose_cursor_file,
+            page_background_path,
+            choose_page_background,
+            clear_page_background,
             open_final_video,
             open_source_video,
             reveal_output

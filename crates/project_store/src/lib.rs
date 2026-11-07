@@ -4,7 +4,7 @@ use focusflow_domain::CameraTimeline;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
-    io::{BufReader, BufWriter, Write},
+    io::{self, BufReader, BufWriter, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -29,6 +29,12 @@ pub struct ProjectAssets {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectSkillSelection {
+    pub id: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusFlowProject {
     pub schema_version: u32,
     pub project_id: String,
@@ -38,6 +44,9 @@ pub struct FocusFlowProject {
     pub state: ProjectState,
     pub duration_ms: Option<u64>,
     pub director_profile: String,
+    /// BreadSkill used for automatic generation. Missing on legacy projects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_skill: Option<ProjectSkillSelection>,
     pub assets: ProjectAssets,
 }
 
@@ -122,6 +131,11 @@ impl FocusFlowProject {
         if !matches!(self.director_profile.as_str(), "clean" | "dynamic" | "soft") {
             return Err("unknown director profile".to_string());
         }
+        if let Some(skill) = &self.selected_skill {
+            if skill.id.trim().is_empty() || skill.version.trim().is_empty() {
+                return Err("selected skill id and version cannot be empty".to_string());
+            }
+        }
         for path in [
             &self.assets.source_video,
             &self.assets.mouse_trace,
@@ -182,30 +196,36 @@ fn validate_asset_path(path: &Path) -> Result<(), String> {
 
 fn save_json_atomically<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("cannot create project directory: {error}"))?;
+    fs::create_dir_all(parent).map_err(|error| project_io_error("创建保存目录", &error))?;
     let temporary = path.with_extension(format!(
         "{}.tmp",
         path.extension()
             .and_then(|value| value.to_str())
             .unwrap_or("focusflow")
     ));
-    let file =
-        File::create(&temporary).map_err(|error| format!("cannot create project: {error}"))?;
+    let file = File::create(&temporary).map_err(|error| project_io_error("创建录制项目", &error))?;
     let mut writer = BufWriter::new(file);
     serde_json::to_writer_pretty(&mut writer, value)
         .map_err(|error| format!("cannot encode project: {error}"))?;
     writer
         .flush()
-        .map_err(|error| format!("cannot flush project: {error}"))?;
+        .map_err(|error| project_io_error("写入录制项目", &error))?;
     writer
         .get_ref()
         .sync_all()
-        .map_err(|error| format!("cannot sync project: {error}"))?;
+        .map_err(|error| project_io_error("保存录制项目", &error))?;
     if path.exists() {
         fs::remove_file(path).map_err(|error| format!("cannot replace project: {error}"))?;
     }
-    fs::rename(&temporary, path).map_err(|error| format!("cannot commit project: {error}"))
+    fs::rename(&temporary, path).map_err(|error| project_io_error("提交录制项目", &error))
+}
+
+fn project_io_error(action: &str, error: &io::Error) -> String {
+    match error.raw_os_error() {
+        Some(21) => format!("{action}失败：保存设备未就绪，请检查磁盘连接或重新选择保存位置"),
+        Some(112) => format!("{action}失败：保存位置空间不足，请清理磁盘或重新选择保存位置"),
+        _ => format!("{action}失败：{error}"),
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +243,10 @@ mod tests {
             state: ProjectState::Ready,
             duration_ms: Some(1_000),
             director_profile: "clean".to_string(),
+            selected_skill: Some(ProjectSkillSelection {
+                id: "breadshot.clean".to_string(),
+                version: "1.0.0".to_string(),
+            }),
             assets: ProjectAssets {
                 source_video: "recording-1.mp4".into(),
                 mouse_trace: "recording-1.mouse.jsonl".into(),

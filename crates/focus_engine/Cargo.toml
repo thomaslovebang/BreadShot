@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 focusflow-domain = { path = "../domain" }
+focusflow-skill-runtime = { path = "../skill_runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

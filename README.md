@@ -39,9 +39,18 @@ The goal is not to become a general-purpose editor. The goal is to make editing 
 - Per-role `.cur` and animated `.ani` cursor replacement for all 17 Windows cursor roles.
 - Global cursor sizing based on the real Windows cursor baseline.
 - Persistent display, folder, shortcut, audio, language, and cursor settings.
+- A persistent custom image appearance that spans every app page and never enters recordings.
 - Local processing with NVIDIA NVENC acceleration when available.
 - A clean output folder containing only the source and automatically directed MP4.
 - Chinese, English, Japanese, French, German, Spanish, and Arabic interfaces.
+
+## v0.3.2
+
+- Apply a chosen PNG, JPEG, WebP, or BMP image across the entire BreadShot interface.
+- Crop, reposition, zoom, or fit the image while keeping controls readable on every page.
+- Preserve the selected appearance between launches without depending on the original image file.
+- Remove the unfinished cloud-model experiment so automatic directing remains predictable and fully local.
+- Introduce the internal BreadSkill v1 foundation for future installable directing styles, without exposing an unfinished marketplace UI.
 
 ## Private by default
 

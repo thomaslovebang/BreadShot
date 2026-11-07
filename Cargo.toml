@@ -11,6 +11,7 @@ members = [
     "crates/project_store",
     "crates/editor_core",
     "crates/platform_windows",
+    "crates/skill_runtime",
 ]
 
 [workspace.package]

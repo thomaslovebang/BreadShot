@@ -4,6 +4,7 @@ use focusflow_domain::{
     CameraEasing, CameraPose, CameraSegment, CameraTimeline, FocusReason, MouseEvent,
     MouseEventKind, NormalizedPoint,
 };
+use focusflow_skill_runtime::{DirectorRules, clean_skill};
 use serde::Deserialize;
 use serde::Serialize;
 use std::io::BufRead;
@@ -34,7 +35,7 @@ impl DirectorProfile {
     #[must_use]
     pub fn config(self) -> FocusConfig {
         match self {
-            Self::Clean => FocusConfig::default(),
+            Self::Clean => FocusConfig::from(clean_skill().director),
             Self::Dynamic => FocusConfig {
                 dwell_threshold_ms: 600,
                 enter_duration_ms: 420,
@@ -87,7 +88,7 @@ impl DirectorProfile {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FocusConfig {
     pub dwell_threshold_ms: u64,
     pub enter_duration_ms: u64,
@@ -111,6 +112,35 @@ pub struct FocusConfig {
     pub max_pan_duration_ms: u64,
     pub pan_duration_per_unit_ms: f64,
     pub min_confidence: f64,
+}
+
+impl From<DirectorRules> for FocusConfig {
+    fn from(rules: DirectorRules) -> Self {
+        Self {
+            dwell_threshold_ms: rules.dwell_threshold_ms,
+            enter_duration_ms: rules.enter_duration_ms,
+            exit_duration_ms: rules.exit_duration_ms,
+            click_hold_ms: rules.click_hold_ms,
+            double_click_hold_ms: rules.double_click_hold_ms,
+            drag_hold_ms: rules.drag_hold_ms,
+            typing_hold_ms: rules.typing_hold_ms,
+            scroll_hold_ms: rules.scroll_hold_ms,
+            dwell_zoom: rules.dwell_zoom,
+            click_zoom: rules.click_zoom,
+            double_click_zoom: rules.double_click_zoom,
+            drag_zoom: rules.drag_zoom,
+            typing_zoom: rules.typing_zoom,
+            scroll_zoom: rules.scroll_zoom,
+            merge_window_ms: rules.merge_window_ms,
+            merge_distance: rules.merge_distance,
+            direct_transition_gap_ms: rules.direct_transition_gap_ms,
+            click_cooldown_ms: rules.click_cooldown_ms,
+            min_pan_duration_ms: rules.min_pan_duration_ms,
+            max_pan_duration_ms: rules.max_pan_duration_ms,
+            pan_duration_per_unit_ms: rules.pan_duration_per_unit_ms,
+            min_confidence: rules.min_confidence,
+        }
+    }
 }
 
 impl Default for FocusConfig {
@@ -157,13 +187,14 @@ pub struct SmartFocusEngine {
     pub config: FocusConfig,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Cue {
-    time_ms: u64,
-    hold_until_ms: u64,
-    pose: CameraPose,
-    reason: FocusReason,
-    confidence: f64,
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FocusCandidate {
+    pub time_ms: u64,
+    pub hold_until_ms: u64,
+    pub anchor: NormalizedPoint,
+    pub pose: CameraPose,
+    pub reason: FocusReason,
+    pub confidence: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -189,20 +220,8 @@ impl FocusEngine for SmartFocusEngine {
             });
         }
 
-        let drags = drag_gestures(events);
-        let double_clicks = double_click_gestures(events, &drags);
-        let mut cues = self.click_cues(events, &drags, &double_clicks);
-        cues.extend(self.double_click_cues(&double_clicks));
-        cues.extend(self.drag_cues(&drags));
-        cues.extend(self.typing_cues(events));
-        cues.extend(self.scroll_cues(events));
-        cues.extend(self.dwell_cues(events));
-        cues.retain(|cue| {
-            cue.time_ms < duration_ms && cue.confidence >= self.config.min_confidence
-        });
-        cues.sort_by_key(|cue| cue.time_ms);
-        let cues = self.merge_cues(cues);
-        Ok(self.timeline_from_cues(duration_ms, &cues))
+        let candidates = self.candidates(duration_ms, events);
+        Ok(self.timeline_from_candidates(duration_ms, &candidates))
     }
 }
 
@@ -218,27 +237,42 @@ impl SmartFocusEngine {
     }
 
     pub fn analyze_trace<R: BufRead>(&self, reader: R) -> Result<CameraTimeline, String> {
-        let mut events = Vec::new();
-        let mut duration_ms = 0;
-        for (index, line) in reader.lines().enumerate() {
-            let line = line.map_err(|error| format!("读取轨迹第 {} 行失败：{error}", index + 1))?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let trace: TraceLine = serde_json::from_str(&line)
-                .map_err(|error| format!("轨迹第 {} 行不是有效 JSON：{error}", index + 1))?;
-            if trace.line_type == "end" {
-                duration_ms = duration_ms.max(trace.time_ms.unwrap_or(0));
-                continue;
-            }
-            if trace.line_type != "mouse" {
-                continue;
-            }
-            let event = trace.into_mouse_event(index + 1)?;
-            duration_ms = duration_ms.max(event.time_ms);
-            events.push(event);
-        }
+        let (duration_ms, events) = read_trace(reader)?;
         self.analyze(duration_ms, &events)
+    }
+
+    pub fn analyze_trace_candidates<R: BufRead>(
+        &self,
+        reader: R,
+    ) -> Result<(u64, Vec<FocusCandidate>), String> {
+        let (duration_ms, events) = read_trace(reader)?;
+        Ok((duration_ms, self.candidates(duration_ms, &events)))
+    }
+
+    #[must_use]
+    pub fn candidates(&self, duration_ms: u64, events: &[MouseEvent]) -> Vec<FocusCandidate> {
+        let drags = drag_gestures(events);
+        let double_clicks = double_click_gestures(events, &drags);
+        let mut cues = self.click_cues(events, &drags, &double_clicks);
+        cues.extend(self.double_click_cues(&double_clicks));
+        cues.extend(self.drag_cues(&drags));
+        cues.extend(self.typing_cues(events));
+        cues.extend(self.scroll_cues(events));
+        cues.extend(self.dwell_cues(events));
+        cues.retain(|cue| {
+            cue.time_ms < duration_ms && cue.confidence >= self.config.min_confidence
+        });
+        cues.sort_by_key(|cue| cue.time_ms);
+        self.merge_cues(cues)
+    }
+
+    #[must_use]
+    pub fn timeline_from_candidates(
+        &self,
+        duration_ms: u64,
+        candidates: &[FocusCandidate],
+    ) -> CameraTimeline {
+        self.timeline_from_cues(duration_ms, candidates)
     }
 
     fn click_cues(
@@ -246,7 +280,7 @@ impl SmartFocusEngine {
         events: &[MouseEvent],
         drags: &[DragGesture],
         double_clicks: &[DoubleClickGesture],
-    ) -> Vec<Cue> {
+    ) -> Vec<FocusCandidate> {
         events
             .iter()
             .enumerate()
@@ -263,9 +297,10 @@ impl SmartFocusEngine {
             })
             .filter(|(_, event)| !is_double_click_member(event, double_clicks))
             .filter(|(index, _)| !click_during_fast_movement(events, *index))
-            .map(|(_, event)| Cue {
+            .map(|(_, event)| FocusCandidate {
                 time_ms: event.time_ms,
                 hold_until_ms: event.time_ms.saturating_add(self.config.click_hold_ms),
+                anchor: event.position,
                 pose: CameraPose {
                     center: constrained_center(event.position, self.config.click_zoom),
                     zoom: self.config.click_zoom,
@@ -276,15 +311,16 @@ impl SmartFocusEngine {
             .collect()
     }
 
-    fn double_click_cues(&self, gestures: &[DoubleClickGesture]) -> Vec<Cue> {
+    fn double_click_cues(&self, gestures: &[DoubleClickGesture]) -> Vec<FocusCandidate> {
         gestures
             .iter()
-            .map(|gesture| Cue {
+            .map(|gesture| FocusCandidate {
                 time_ms: gesture.first.time_ms,
                 hold_until_ms: gesture
                     .second
                     .time_ms
                     .saturating_add(self.config.double_click_hold_ms),
+                anchor: gesture.second.position,
                 pose: CameraPose {
                     center: constrained_center(
                         gesture.second.position,
@@ -298,13 +334,14 @@ impl SmartFocusEngine {
             .collect()
     }
 
-    fn drag_cues(&self, drags: &[DragGesture]) -> Vec<Cue> {
+    fn drag_cues(&self, drags: &[DragGesture]) -> Vec<FocusCandidate> {
         drags
             .iter()
             .flat_map(|drag| {
-                let start = Cue {
+                let start = FocusCandidate {
                     time_ms: drag.start.time_ms,
                     hold_until_ms: drag.end.time_ms,
+                    anchor: drag.start.position,
                     pose: CameraPose {
                         center: constrained_center(drag.start.position, self.config.drag_zoom),
                         zoom: self.config.drag_zoom,
@@ -312,9 +349,10 @@ impl SmartFocusEngine {
                     reason: FocusReason::Drag,
                     confidence: 0.96,
                 };
-                let end = Cue {
+                let end = FocusCandidate {
                     time_ms: drag.end.time_ms,
                     hold_until_ms: drag.end.time_ms.saturating_add(self.config.drag_hold_ms),
+                    anchor: drag.end.position,
                     pose: CameraPose {
                         center: constrained_center(drag.end.position, self.config.drag_zoom),
                         zoom: self.config.drag_zoom,
@@ -327,7 +365,7 @@ impl SmartFocusEngine {
             .collect()
     }
 
-    fn typing_cues(&self, events: &[MouseEvent]) -> Vec<Cue> {
+    fn typing_cues(&self, events: &[MouseEvent]) -> Vec<FocusCandidate> {
         let mut latest_click: Option<MouseEvent> = None;
         let mut active_anchor: Option<MouseEvent> = None;
         let mut last_activity_ms: Option<u64> = None;
@@ -357,9 +395,10 @@ impl SmartFocusEngine {
                 last_activity_ms = Some(event.time_ms);
                 continue;
             };
-            cues.push(Cue {
+            cues.push(FocusCandidate {
                 time_ms: event.time_ms,
                 hold_until_ms: event.time_ms.saturating_add(self.config.typing_hold_ms),
+                anchor: anchor.position,
                 pose: CameraPose {
                     center: constrained_center(anchor.position, self.config.typing_zoom),
                     zoom: self.config.typing_zoom,
@@ -372,7 +411,7 @@ impl SmartFocusEngine {
         cues
     }
 
-    fn scroll_cues(&self, events: &[MouseEvent]) -> Vec<Cue> {
+    fn scroll_cues(&self, events: &[MouseEvent]) -> Vec<FocusCandidate> {
         let mut latest_click: Option<MouseEvent> = None;
         let mut active_anchor: Option<MouseEvent> = None;
         let mut last_scroll_ms: Option<u64> = None;
@@ -408,9 +447,10 @@ impl SmartFocusEngine {
                 last_scroll_ms = Some(event.time_ms);
                 continue;
             };
-            cues.push(Cue {
+            cues.push(FocusCandidate {
                 time_ms: event.time_ms,
                 hold_until_ms: event.time_ms.saturating_add(self.config.scroll_hold_ms),
+                anchor: anchor.position,
                 pose: CameraPose {
                     center: constrained_center(anchor.position, self.config.scroll_zoom),
                     zoom: self.config.scroll_zoom,
@@ -423,7 +463,7 @@ impl SmartFocusEngine {
         cues
     }
 
-    fn dwell_cues(&self, events: &[MouseEvent]) -> Vec<Cue> {
+    fn dwell_cues(&self, events: &[MouseEvent]) -> Vec<FocusCandidate> {
         let moves: Vec<_> = events
             .iter()
             .filter(|event| event.kind == MouseEventKind::Move)
@@ -443,9 +483,10 @@ impl SmartFocusEngine {
                     .clamp(0.0, 1.0);
                 let stability_score = (1.0 - movement / DWELL_MAX_DISTANCE).clamp(0.0, 1.0);
                 let focus_time = start.time_ms.saturating_add(self.config.dwell_threshold_ms);
-                Some(Cue {
+                Some(FocusCandidate {
                     time_ms: focus_time,
                     hold_until_ms: end.time_ms.saturating_sub(100).max(focus_time + 350),
+                    anchor: start.position,
                     pose: CameraPose {
                         center: constrained_center(start.position, self.config.dwell_zoom),
                         zoom: self.config.dwell_zoom,
@@ -457,8 +498,8 @@ impl SmartFocusEngine {
             .collect()
     }
 
-    fn merge_cues(&self, cues: Vec<Cue>) -> Vec<Cue> {
-        let mut merged: Vec<Cue> = Vec::new();
+    fn merge_cues(&self, cues: Vec<FocusCandidate>) -> Vec<FocusCandidate> {
+        let mut merged: Vec<FocusCandidate> = Vec::new();
         for cue in cues {
             if let Some(previous) = merged.last_mut() {
                 let time_gap = cue.time_ms.saturating_sub(previous.time_ms);
@@ -476,6 +517,7 @@ impl SmartFocusEngine {
                         FocusReason::Click | FocusReason::DoubleClick | FocusReason::Drag
                     ) {
                         previous.pose = cue.pose;
+                        previous.anchor = cue.anchor;
                         previous.reason = cue.reason;
                     }
                     continue;
@@ -493,7 +535,7 @@ impl SmartFocusEngine {
         merged
     }
 
-    fn timeline_from_cues(&self, duration_ms: u64, cues: &[Cue]) -> CameraTimeline {
+    fn timeline_from_cues(&self, duration_ms: u64, cues: &[FocusCandidate]) -> CameraTimeline {
         if cues.is_empty() {
             return CameraTimeline {
                 schema_version: 1,
@@ -645,6 +687,30 @@ impl SmartFocusEngine {
             self.config.max_pan_duration_ms,
         )
     }
+}
+
+fn read_trace<R: BufRead>(reader: R) -> Result<(u64, Vec<MouseEvent>), String> {
+    let mut events = Vec::new();
+    let mut duration_ms = 0;
+    for (index, line) in reader.lines().enumerate() {
+        let line = line.map_err(|error| format!("读取轨迹第 {} 行失败：{error}", index + 1))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let trace: TraceLine = serde_json::from_str(&line)
+            .map_err(|error| format!("轨迹第 {} 行不是有效 JSON：{error}", index + 1))?;
+        if trace.line_type == "end" {
+            duration_ms = duration_ms.max(trace.time_ms.unwrap_or(0));
+            continue;
+        }
+        if trace.line_type != "mouse" {
+            continue;
+        }
+        let event = trace.into_mouse_event(index + 1)?;
+        duration_ms = duration_ms.max(event.time_ms);
+        events.push(event);
+    }
+    Ok((duration_ms, events))
 }
 
 fn click_during_fast_movement(events: &[MouseEvent], click_index: usize) -> bool {
@@ -860,6 +926,13 @@ fn push_keyframe(frames: &mut Vec<Keyframe>, frame: Keyframe) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clean_profile_is_driven_by_the_built_in_breadskill() {
+        let skill_config = FocusConfig::from(clean_skill().director);
+        assert_eq!(DirectorProfile::Clean.config(), skill_config);
+        assert_eq!(skill_config, FocusConfig::default());
+    }
 
     fn mouse(time_ms: u64, x: f64, y: f64, speed: f64, kind: MouseEventKind) -> MouseEvent {
         MouseEvent {
